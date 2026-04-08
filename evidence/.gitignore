@@ -1,0 +1,4 @@
+# Evidence output from real scanner runs — not committed
+# Run tools/collect-evidence.sh to generate
+*
+!.gitignore
