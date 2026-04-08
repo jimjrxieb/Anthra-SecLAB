@@ -1,4 +1,4 @@
-# Plan of Action &amp; Milestones (POA&amp;M)
+# Plan of Action & Milestones (POA&M)
 
 Anthra-SecLAB — Break/Fix Evidence Tracker
 
