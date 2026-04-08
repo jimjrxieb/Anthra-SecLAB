@@ -1,0 +1,8 @@
+# GP-Copilot JSA findings contain example secrets from scan outputs — not real credentials
+GP-Copilot/jsa-devsec/findings/
+# DVWA test files in git history — not part of NovaSec source
+vulnerabilities/
+external/
+GP-Copilot/                                                                                                                                                                                   
+OSS-Copilot/                                                                                                                                                                                  
+MSSP/                                                                                                                                                                                         

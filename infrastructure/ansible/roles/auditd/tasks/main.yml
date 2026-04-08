@@ -1,0 +1,84 @@
+# auditd — Linux Audit Framework
+# NIST 800-53: AU-2 (Audit Events), AU-3 (Content of Audit Records),
+#              AU-12 (Audit Generation)
+
+---
+- name: Install auditd
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+
+- name: Configure audit rules (AU-2, AU-12)
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/k3s-security.rules
+    mode: "0640"
+    content: |
+      # NIST AU-2: Events that must be audited
+
+      # User/group changes (AC-2)
+      -w /etc/passwd -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/gshadow -p wa -k identity
+
+      # Sudo usage (AC-6)
+      -w /etc/sudoers -p wa -k sudo_changes
+      -w /etc/sudoers.d/ -p wa -k sudo_changes
+
+      # SSH config changes (AC-17)
+      -w /etc/ssh/sshd_config -p wa -k ssh_config
+
+      # k3s config changes (CM-3)
+      -w /etc/rancher/ -p wa -k k3s_config
+      -w /var/lib/rancher/ -p wa -k k3s_data
+
+      # Login events (AC-7)
+      -w /var/log/auth.log -p wa -k auth_log
+      -w /var/log/faillog -p wa -k login_failures
+
+      # Cron changes (CM-6)
+      -w /etc/crontab -p wa -k cron
+      -w /etc/cron.d/ -p wa -k cron
+      -w /var/spool/cron/ -p wa -k cron
+
+      # Kernel module loading (SI-7)
+      -w /sbin/insmod -p x -k kernel_modules
+      -w /sbin/rmmod -p x -k kernel_modules
+      -w /sbin/modprobe -p x -k kernel_modules
+
+      # Time changes (AU-8)
+      -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time_change
+      -w /etc/localtime -p wa -k time_change
+
+      # Network changes (SC-7)
+      -a always,exit -F arch=b64 -S sethostname -S setdomainname -k network_change
+      -w /etc/hosts -p wa -k network_change
+      -w /etc/network/ -p wa -k network_change
+
+      # File deletion (AU-12)
+      -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k file_deletion
+
+      # Make the config immutable (requires reboot to change)
+      -e 2
+  notify: restart auditd
+
+- name: Configure auditd settings
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: "^max_log_file =", line: "max_log_file = 50" }
+    - { regexp: "^num_logs =", line: "num_logs = 10" }
+    - { regexp: "^max_log_file_action =", line: "max_log_file_action = ROTATE" }
+    - { regexp: "^space_left_action =", line: "space_left_action = SYSLOG" }
+  notify: restart auditd
+
+- name: Enable and start auditd
+  ansible.builtin.systemd:
+    name: auditd
+    state: started
+    enabled: true
+

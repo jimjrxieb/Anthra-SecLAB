@@ -1,0 +1,79 @@
+# Fluent Bit — Log Collector (DaemonSet)
+# Matches GP-CONSULTING/03-RUNTIME-SECURITY/playbooks/06-deploy-logging.md
+# NIST: AU-2 (Audit Events), AU-3 (Content of Audit Records)
+#
+# 30MB per node. Handles CRI, JSON, Docker log formats.
+# Ships container logs + host logs to Loki.
+
+config:
+  inputs: |
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*.log
+        multiline.parser  docker, cri
+        Tag               kube.*
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/syslog
+        Tag               host.syslog
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/auth.log
+        Tag               host.auth
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/audit/audit.log
+        Tag               host.auditd
+
+  filters: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+
+  outputs: |
+    [OUTPUT]
+        Name                 loki
+        Match                *
+        Host                 loki.monitoring.svc.cluster.local
+        Port                 3100
+        Labels               job=fluent-bit
+        Auto_Kubernetes_Labels On
+        Line_Format          json
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+tolerations:
+  - operator: Exists
+
+# k3s uses containerd, not Docker — override defaults
+daemonSetVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: etcmachineid
+    hostPath:
+      path: /etc/machine-id
+      type: File
+
+daemonSetVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+    readOnly: true
+  - name: etcmachineid
+    mountPath: /etc/machine-id
+    readOnly: true

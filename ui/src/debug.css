@@ -1,0 +1,21 @@
+/* Debug mode - shows component boundaries */
+body.debug [data-dev] {
+  outline: 1px dashed magenta !important;
+  position: relative;
+}
+
+body.debug [data-dev]::before {
+  content: attr(data-dev);
+  position: absolute;
+  top: -20px;
+  left: 0;
+  background: magenta;
+  color: white;
+  padding: 2px 4px;
+  font-size: 10px;
+  font-family: monospace;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+/* Toggle debug mode with: document.body.classList.toggle('debug') */

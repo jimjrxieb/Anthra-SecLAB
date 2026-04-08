@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anthra-log-ingest
+  labels:
+    app: anthra-log-ingest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anthra-log-ingest
+  template:
+    metadata:
+      labels:
+        app: anthra-log-ingest
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: log-ingest
+          image: anthra-log-ingest:seclab
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9090
+              name: http
+          env:
+            - name: DB_HOST
+              value: anthra-db
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: anthra
+            - name: DB_USER
+              value: anthra
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: anthra-db-secret
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

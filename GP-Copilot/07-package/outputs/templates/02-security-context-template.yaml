@@ -1,0 +1,59 @@
+# =============================================================================
+# NIST 800-53 AC-6: LEAST PRIVILEGE TEMPLATE (SECURITYCONTEXT)
+# =============================================================================
+#
+# Every Kubernetes deployment MUST include these settings to pass FedRAMP 
+# Moderate authorization.
+#
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hardened-app
+spec:
+  template:
+    spec:
+      # AC-6: Pod-level security context (defaults for all containers)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: app
+          image: repo/image:v1.0.0 # NIST CM-2: Pinned image version
+          
+          # AC-6: Container-level override
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false # REQUIRED
+            readOnlyRootFilesystem: true    # NIST SC-28: Recommended
+            capabilities:
+              drop:
+                - ALL # NIST AC-6: Drop all Linux capabilities
+            seccompProfile:
+              type: RuntimeDefault
+
+          # NIST CM-2: Resource limits (REQUIRED)
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+
+          # NIST SC-28: Use ephemeral volumes for temporary writes if readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}

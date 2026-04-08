@@ -1,0 +1,30 @@
+.
+├── App.jsx
+├── SRC-Tree.txt
+├── components
+│   ├── AvatarPanel.tsx
+│   ├── ChatBox.jsx
+│   ├── ChatPanel.tsx
+│   ├── InterviewPanel.tsx
+│   ├── IntroPlayer.tsx
+│   ├── JadeBlackHome.tsx
+│   ├── ModernHome.tsx
+│   ├── PortfolioLayout.tsx
+│   ├── Projects.tsx
+│   └── TwoPanelHome.tsx
+├── data
+│   └── knowledge
+│       └── jimmie
+│           ├── projects.json
+│           └── qa.json
+├── debug.css
+├── debugToggle.ts
+├── index.css
+├── lib
+│   ├── api.ts
+│   └── utils.ts
+├── main.jsx
+└── pages
+    └── Landing.jsx
+
+6 directories, 21 files

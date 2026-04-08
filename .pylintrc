@@ -1,0 +1,19 @@
+[MASTER]
+ignore=CVS,.git,__pycache__,.venv,venv,env,node_modules
+
+[MESSAGES CONTROL]
+disable=C0114,C0115,C0116,  # Missing docstrings
+        C0103,              # Invalid name
+        R0903,              # Too few public methods
+        R0913,              # Too many arguments
+        W0212               # Protected member access
+
+[REPORTS]
+output-format=json
+
+[FORMAT]
+max-line-length=120
+indent-string='    '
+
+[BASIC]
+good-names=i,j,k,x,y,z,ex,Run,_,id,db

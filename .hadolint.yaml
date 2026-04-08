@@ -1,0 +1,33 @@
+# Hadolint Dockerfile Linting Configuration (CM-2: Baseline Configuration)
+# FedRAMP Moderate Docker security baseline
+
+# Ignore rules that conflict with our requirements
+ignored:
+  - DL3008  # Pin versions in apt-get (we use specific base images)
+  - DL3013  # Pin versions in pip (handled by requirements.txt)
+
+# Trusted registries (only allow specific registries)
+# FedRAMP requires provenance tracking
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+  - registry.access.redhat.com
+  - 123456789012.dkr.ecr.us-east-1.amazonaws.com  # Your ECR registry
+
+# Failure threshold
+failure-threshold: warning
+
+# Rules enabled
+# DL3000-series: Basic Dockerfile best practices
+# DL3001: Use COPY instead of ADD
+# DL3002: Last USER should not be root
+# DL3003: Use WORKDIR
+# DL3006: Always tag images
+# DL3007: Don't use :latest
+# DL3009: Delete apt-get lists after install
+# DL3015: Avoid RUN apt-get upgrade/dist-upgrade
+# DL3020: Use COPY --from for multi-stage
+# DL3022: Use COPY --from for named stages
+# DL3025: Use JSON notation for CMD/ENTRYPOINT
+# SC2086: Double quote to prevent globbing
+# SC2046: Quote to prevent word splitting

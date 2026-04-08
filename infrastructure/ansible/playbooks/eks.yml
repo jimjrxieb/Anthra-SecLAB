@@ -1,0 +1,87 @@
+# eks.yml — EKS staging environment
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/eks.yml
+#
+# Prerequisites:
+#   1. Uncomment EKS module in terraform/main.tf
+#   2. terraform apply with EKS tfvars
+#   3. Run this playbook
+#
+# Roles (in order):
+#   eks-configure:  CM-2  — kubeconfig, ALB controller, EBS CSI, ArgoCD
+#   cluster-harden: SC-7, CM-6 — NetworkPolicy, PSS, RBAC, ResourceQuota
+#   loki-stack:     AU-6, AU-7, SI-4 — Fluent Bit + Loki + Grafana SIEM
+#   app-deploy:     CM-3  — portfolio namespace, ArgoCD Application
+#
+# NOT needed (EKS manages these):
+#   k3s-install      — EKS IS the cluster
+#   k3s-harden       — managed nodes, no OS access
+#   auditd           — CloudTrail covers API audit
+#   cloudwatch-agent — Container Insights covers metrics
+#
+# Cost comparison:
+#   k3s.yml: ~$15/mo (t3.small EC2)
+#   eks.yml: ~$73/mo control plane + ~$60/mo nodes = ~$133/mo minimum
+#   Same K8s API. Same ArgoCD. Same app. Same security posture.
+
+---
+- name: Configure EKS staging cluster
+  hosts: k3s  # reuses same bastion/jump host for kubectl access
+  become: true
+
+  pre_tasks:
+    - name: Wait for SSH to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Install kubectl and AWS CLI
+      ansible.builtin.apt:
+        name:
+          - curl
+          - unzip
+          - jq
+          - python3-pip
+        state: present
+
+    - name: Install AWS CLI v2
+      ansible.builtin.shell: |
+        if ! command -v aws &>/dev/null; then
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -qo /tmp/awscliv2.zip -d /tmp
+          /tmp/aws/install
+          rm -rf /tmp/aws /tmp/awscliv2.zip
+        fi
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: Install kubectl
+      ansible.builtin.shell: |
+        if ! command -v kubectl &>/dev/null; then
+          curl -fsSLo /usr/local/bin/kubectl \
+            "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x /usr/local/bin/kubectl
+        fi
+      args:
+        creates: /usr/local/bin/kubectl
+
+    - name: Create .kube directory
+      ansible.builtin.file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0700"
+
+  roles:
+    # --- EKS-only roles ---
+    - role: eks-configure
+      tags: [eks, configure]
+
+    # --- Shared roles (K8s-level — same on k3s and EKS) ---
+    - role: cluster-harden
+      tags: [k8s, harden, shared]
+
+    - role: loki-stack
+      tags: [monitoring, siem, loki, shared]
+
+    - role: app-deploy
+      tags: [app, deploy, shared]

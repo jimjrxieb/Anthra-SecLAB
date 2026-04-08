@@ -1,0 +1,65 @@
+# k3s.yml — k3s on EC2 staging environment
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/k3s.yml
+#
+# Roles (in order):
+#   k3s-install:      CM-2  — install k3s, Helm, encryption at rest
+#   k3s-harden:       AC-6, SC-7, CM-6, CM-7 — OS hardening (sysctl, SSH, UFW)
+#   auditd:           AU-2, AU-3, AU-12 — Linux audit framework (15 rule categories)
+#   cloudwatch-agent: AU-6, SI-4 — ship host logs/metrics to CloudWatch
+#   cluster-harden:   SC-7, CM-6 — K8s-level hardening (NetworkPolicy, PSS, RBAC)
+#   loki-stack:       AU-6, AU-7, SI-4 — Fluent Bit + Loki + Grafana SIEM
+#   app-deploy:       CM-3 — Traefik, ArgoCD, portfolio namespace
+
+---
+- name: Configure k3s staging host
+  hosts: k3s
+  become: true
+
+  pre_tasks:
+    - name: Wait for SSH to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - jq
+          - unzip
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - net-tools
+        state: present
+
+  roles:
+    # --- k3s-only roles (OS-level) ---
+    - role: k3s-install
+      tags: [k3s, install]
+
+    - role: k3s-harden
+      tags: [k3s, harden]
+
+    - role: auditd
+      tags: [audit, security]
+
+    - role: cloudwatch-agent
+      tags: [monitoring, cloudwatch]
+
+    # --- Shared roles (K8s-level — same on k3s and EKS) ---
+    - role: cluster-harden
+      tags: [k8s, harden, shared]
+
+    - role: loki-stack
+      tags: [monitoring, siem, loki, shared]
+
+    - role: app-deploy
+      tags: [app, deploy, shared]

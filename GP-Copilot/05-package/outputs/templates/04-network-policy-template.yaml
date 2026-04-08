@@ -1,0 +1,62 @@
+# =============================================================================
+# NIST 800-53 SC-7: NETWORK SEGMENTATION (NETWORKPOLICY)
+# =============================================================================
+#
+# Default-deny is the gold standard for FedRAMP. Only allow required traffic.
+# All communications MUST be restricted (Least Privilege Network).
+#
+# =============================================================================
+
+# 1. DEFAULT-DENY POLICY (Start here)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: my-namespace
+spec:
+  podSelector: {} # NIST SC-7: Applies to all pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+
+# 2. ALLOW APP TRAFFIC (Example for UI -> API)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-to-api
+  namespace: my-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: api # NIST SC-7: Targeting the API
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui # NIST SC-7: Only allow traffic from UI pods
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+
+# 3. ALLOW DATABASE ACCESS (Example for API -> DB)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-db
+  namespace: my-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - protocol: TCP
+          port: 5432

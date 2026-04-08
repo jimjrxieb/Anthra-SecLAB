@@ -1,0 +1,81 @@
+# =============================================================================
+# FEDRAMP MODERATE SECURITY CI/CD PIPELINE TEMPLATE
+# =============================================================================
+#
+# Use this template to implement FedRAMP-compliant security scanning in your 
+# GitHub Actions pipeline.
+#
+# NIST 800-53 Controls Satisfied:
+# - IA-5(7): No Embedded Static Authenticators (Gitleaks)
+# - SA-11: Developer Security Testing (Semgrep/Bandit)
+# - SI-2: Flaw Remediation (Trivy/Grype)
+# - CM-2: Baseline Configuration (Hadolint/Trivy)
+# - AC-6: Least Privilege (Kubescape)
+#
+# =============================================================================
+
+name: FedRAMP Security Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # IA-5(7): Secret Detection
+  secrets-scan:
+    name: "[IA-5(7)] Secret Detection"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+
+  # SA-11: Static Analysis
+  sast-scan:
+    name: "[SA-11] SAST Analysis"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/security-audit p/owasp-top-ten p/kubernetes p/dockerfile
+      - name: Bandit (Python)
+        run: |
+          pip install bandit
+          bandit -r . -f sarif -o bandit.sarif || true
+
+  # SI-2: Dependency & CVE Scanning
+  vulnerability-scan:
+    name: "[SI-2] Vulnerability Scanning"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy Dependency Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  # CM-2: Container & IaC Baseline
+  infrastructure-scan:
+    name: "[CM-2] Infrastructure Baseline"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint Dockerfile Lint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          failure-threshold: warning
+      - name: Kubescape NSA/CISA Scan
+        uses: kubescape/github-action@main
+        with:
+          files: "infrastructure/*.yaml"
+          frameworks: nsa,mitre
+          failedThreshold: 0

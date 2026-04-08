@@ -1,0 +1,139 @@
+# loki-stack — Fluent Bit + Loki + Grafana on k3s
+# NIST 800-53: AU-6 (Audit Review/Analysis), SI-4 (System Monitoring),
+#              AU-7 (Audit Reduction/Report Generation)
+#
+# Matches GP-CONSULTING/03-RUNTIME-SECURITY/playbooks/06-deploy-logging.md
+#
+# Stack:
+#   Fluent Bit (DaemonSet) → Loki (storage) → Grafana (query/dashboard)
+#
+# Why Fluent Bit over Promtail (consulting standard):
+#   - 30MB per node (vs Promtail ~50MB, Fluentd ~300MB)
+#   - Handles CRI, JSON, Docker log formats natively
+#   - Falco event integration via /var/log/falco/events.log
+#   - Same tool the consulting playbooks use
+#
+# Why Loki over Elastic:
+#   - 10x less memory (~256MB vs 2GB+ for Elasticsearch)
+#   - Fits t3.small alongside k3s + app workloads
+#   - LogQL (Prometheus-like, easy to learn)
+#
+# Enterprise equivalent: Splunk ($150k+/yr) or Elastic Cloud ($$$)
+# OSS equivalent: Fluent Bit + Loki + Grafana ($0 license)
+
+---
+- name: Create monitoring namespace
+  ansible.builtin.command:
+    cmd: k3s kubectl create namespace monitoring
+  failed_when: false
+  changed_when: true
+
+- name: Label monitoring namespace with PSS
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl label namespace monitoring
+      pod-security.kubernetes.io/enforce=privileged
+      pod-security.kubernetes.io/warn=baseline
+      --overwrite
+  changed_when: true
+
+# --- Helm repos ---
+
+- name: Add Grafana Helm repo
+  ansible.builtin.command:
+    cmd: helm repo add grafana https://grafana.github.io/helm-charts
+  changed_when: true
+  failed_when: false
+
+- name: Add Fluent Helm repo
+  ansible.builtin.command:
+    cmd: helm repo add fluent https://fluent.github.io/helm-charts
+  changed_when: true
+  failed_when: false
+
+- name: Update Helm repos
+  ansible.builtin.command:
+    cmd: helm repo update
+  changed_when: true
+
+# --- Loki (log storage + query engine) ---
+
+- name: Create Loki values file
+  ansible.builtin.template:
+    src: loki-values.yml.j2
+    dest: /home/ubuntu/loki-values.yml
+    owner: ubuntu
+    mode: "0644"
+
+- name: Install Loki via Helm
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install loki grafana/loki
+      --namespace monitoring
+      --values /home/ubuntu/loki-values.yml
+      --kubeconfig /etc/rancher/k3s/k3s.yaml
+      --wait --timeout 5m
+  changed_when: true
+
+# --- Fluent Bit (log collector — DaemonSet) ---
+
+- name: Create Fluent Bit values file
+  ansible.builtin.template:
+    src: fluent-bit-values.yml.j2
+    dest: /home/ubuntu/fluent-bit-values.yml
+    owner: ubuntu
+    mode: "0644"
+
+- name: Install Fluent Bit via Helm
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install fluent-bit fluent/fluent-bit
+      --namespace monitoring
+      --values /home/ubuntu/fluent-bit-values.yml
+      --kubeconfig /etc/rancher/k3s/k3s.yaml
+      --wait --timeout 3m
+  changed_when: true
+
+# --- Grafana (visualization + dashboards) ---
+
+- name: Create Grafana values file
+  ansible.builtin.template:
+    src: grafana-values.yml.j2
+    dest: /home/ubuntu/grafana-values.yml
+    owner: ubuntu
+    mode: "0644"
+
+- name: Install Grafana via Helm
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install grafana grafana/grafana
+      --namespace monitoring
+      --values /home/ubuntu/grafana-values.yml
+      --kubeconfig /etc/rancher/k3s/k3s.yaml
+      --wait --timeout 3m
+  changed_when: true
+
+- name: Get Grafana admin password
+  ansible.builtin.command:
+    cmd: k3s kubectl get secret grafana -n monitoring -o jsonpath='{.data.admin-password}'
+  register: grafana_password_b64
+  changed_when: false
+
+- name: Display access info
+  ansible.builtin.debug:
+    msg:
+      - "Fluent Bit + Loki + Grafana deployed to monitoring namespace."
+      - ""
+      - "Access Grafana:"
+      - "  kubectl port-forward svc/grafana -n monitoring 3000:80"
+      - "  URL:      http://localhost:3000"
+      - "  User:     admin"
+      - "  Password: {{ grafana_password_b64.stdout | b64decode }}"
+      - ""
+      - "Loki is pre-configured as a datasource in Grafana."
+      - ""
+      - "LogQL examples (from 06-deploy-logging.md):"
+      - "  {namespace=\"portfolio\"}                        — all logs"
+      - "  {namespace=\"portfolio\"} |= \"error\"             — errors"
+      - "  {source=\"falco\"} | json | priority=\"Critical\"  — Falco critical"
+      - "  rate({namespace=\"portfolio\"} |= \"error\" [5m])  — error rate"

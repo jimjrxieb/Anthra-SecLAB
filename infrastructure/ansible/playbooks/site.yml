@@ -1,0 +1,34 @@
+# site.yml — Staging environment orchestrator
+#
+# Two deploy methods, same result:
+#   k3s on EC2:  Terraform provisions EC2 → Ansible installs k3s + hardens OS + deploys app
+#   EKS:         Terraform provisions EKS → Ansible configures cluster + deploys app
+#
+# Usage:
+#   # k3s path (default — $15/mo)
+#   ansible-playbook playbooks/k3s.yml
+#
+#   # EKS path ($73/mo+ — uncomment EKS module in terraform first)
+#   ansible-playbook playbooks/eks.yml
+#
+# This file documents the architecture. Run k3s.yml or eks.yml directly.
+#
+# What each path runs:
+#
+#   k3s.yml (EC2 host)          eks.yml (EKS cluster)
+#   ──────────────────          ─────────────────────
+#   k3s-install   (CM-2)       eks-configure  (CM-2)
+#   k3s-harden    (AC-6,SC-7)  (managed nodes — no OS access)
+#   auditd        (AU-2,AU-12) (CloudTrail covers audit)
+#   cloudwatch-agent (AU-6)    (Container Insights covers metrics)
+#   cluster-harden (SC-7,CM-6) cluster-harden (SC-7,CM-6)   ← same
+#   loki-stack    (AU-6,SI-4)  loki-stack    (AU-6,SI-4)    ← same
+#   app-deploy    (CM-3)       app-deploy    (CM-3)          ← same
+#
+# Both paths produce the same K8s API. Same ArgoCD. Same app.
+# The difference is who manages the control plane and nodes.
+
+---
+# Default: run the k3s path
+- name: Staging environment (k3s on EC2)
+  ansible.builtin.import_playbook: k3s.yml

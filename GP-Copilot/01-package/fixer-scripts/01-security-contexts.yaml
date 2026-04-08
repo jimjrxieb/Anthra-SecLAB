@@ -1,0 +1,93 @@
+# JSA-DevSec Auto-Generated Remediation
+# Category: Kubernetes Security Contexts
+# Findings: 7557622, 6852306, 7967163, 0556925, 1699257, 4347066, 4506178, 5032865
+# Rank: D (Auto-fix with logging)
+# Date: 2026-02-12
+
+---
+# Apply this securityContext to ALL container definitions in:
+# - infrastructure/api-deployment.yaml
+# - infrastructure/log-ingest-deployment.yaml
+# - infrastructure/ui-deployment.yaml
+# - infrastructure/db-deployment.yaml
+
+# BEFORE (Current State - VULNERABLE):
+# containers:
+#   - name: api
+#     image: anthra/api:latest
+#     # NO securityContext = runs as root
+
+# AFTER (FedRAMP Compliant):
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example-pod
+spec:
+  # Pod-level security context (applies to all containers)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  containers:
+    - name: api
+      image: anthra/api:1.0.0  # Pinned version, not :latest
+
+      # Container-level security context (overrides pod-level if specified)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false  # Set to true if app doesn't need to write
+        capabilities:
+          drop:
+            - ALL  # Drop all capabilities
+          add: []  # Add back only what's needed (usually none for web apps)
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Resource limits (required by FedRAMP CM-2)
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+
+      # Probes (required for production)
+      livenessProbe:
+        httpGet:
+          path: /api/health
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /api/health
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+---
+# NIST 800-53 Control Mapping:
+# - AC-6: Least Privilege (runAsNonRoot, capabilities drop)
+# - AC-6(1): Authorize Access to Security Functions
+# - AC-6(2): Non-Privileged Access for Nonsecurity Functions
+# - AC-6(9): Log Use of Privileged Functions
+# - CM-2: Baseline Configuration (resource limits)
+# - SC-3: Security Function Isolation (seccomp)
+
+---
+# JSA-DevSec Fix Pattern:
+# 1. Detect missing securityContext
+# 2. Add default secure context (runAsNonRoot: true, drop ALL caps)
+# 3. Add resource limits (if missing)
+# 4. Add probes (if missing)
+# 5. Pin image tags (if :latest)
+# 6. Verify via kubectl dry-run
+# 7. Log fix to feedback system

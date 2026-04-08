@@ -1,0 +1,20 @@
+{
+  "name": "portfolio-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "docker-compose up --build -d",
+    "dev:ui": "cd ui && npm run dev",
+    "build": "docker-compose build",
+    "test": "echo 'Use specific test commands: npm run test:ui, npm run test:api, npm run test:e2e'",
+    "lint": "cd ui && npm run lint",
+    "format": "cd ui && npm run format",
+    "security": "cd ui && npm audit --audit-level=moderate",
+    "install": "cd ui && npm install",
+    "clean": "cd ui && rm -rf node_modules && npm install"
+  },
+  "dependencies": {
+    "tar": "^7.5.11",
+    "yaml": "^1.10.3"
+  }
+}

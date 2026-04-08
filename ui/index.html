@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anthra Center — Security Monitoring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              anthra: {
+                900: '#0f0f1a',
+                800: '#1a1a2e',
+                700: '#25253d',
+                600: '#30304d',
+                500: '#4a4a6a',
+              }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-anthra-900 text-gray-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

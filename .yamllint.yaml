@@ -1,0 +1,19 @@
+# YAML Lint Configuration
+# Validates YAML syntax and style
+
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    allow-non-breakable-inline-mappings: true
+
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  comments:
+    min-spaces-from-content: 1
+
+  document-start: disable  # Allow files without ---
+  truthy: disable  # Allow yes/no in Kubernetes manifests

@@ -1,0 +1,68 @@
+# Grafana — Visualization + Dashboards
+# NIST: AU-6 (Audit Review), AU-7 (Audit Reduction/Report Generation)
+#
+# Enterprise equivalent: Splunk dashboards, Datadog
+# OSS equivalent: Grafana ($0 license)
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  size: 2Gi
+
+# Pre-configure Loki as a datasource
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+        isDefault: true
+        jsonData:
+          maxLines: 1000
+
+# Pre-load dashboards
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Security
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+dashboards:
+  default:
+    # K8s logs overview
+    k8s-logs:
+      gnetId: 15141
+      revision: 1
+      datasource: Loki
+
+# Service — NodePort for easy access during staging
+service:
+  type: ClusterIP
+  port: 80
+
+# Admin password from k8s secret (auto-generated)
+adminUser: admin
+
+# Security context
+securityContext:
+  runAsUser: 472
+  runAsGroup: 472
+  fsGroup: 472

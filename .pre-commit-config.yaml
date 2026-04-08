@@ -1,0 +1,183 @@
+# =============================================================================
+# ANTHRA SECURITY PLATFORM - PRE-COMMIT HOOKS
+# =============================================================================
+#
+# FedRAMP Moderate shift-left security controls implemented at git commit time.
+# Prevents non-compliant code from entering version control.
+#
+# NIST 800-53 Controls:
+# - SA-11(1): Static Code Analysis (pre-commit SAST)
+# - IA-5(7): No Embedded Secrets (Gitleaks)
+# - CM-3(2): Automated Configuration Control Testing
+#
+# Installation:
+#   pip install pre-commit
+#   pre-commit install
+#
+# =============================================================================
+
+repos:
+  # ===========================================================================
+  # BASIC CODE QUALITY
+  # ===========================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags in K8s manifests
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+        name: "[IA-5(7)] Detect Private Keys"
+
+  # ===========================================================================
+  # SECRETS DETECTION (IA-5(7))
+  # ===========================================================================
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.2
+    hooks:
+      - id: gitleaks
+        name: "[IA-5(7)] Gitleaks Secret Scan"
+        args: ['--verbose', '--no-git']
+        stages: [commit]
+
+  # ===========================================================================
+  # PYTHON SECURITY (SA-11)
+  # ===========================================================================
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.7
+    hooks:
+      - id: bandit
+        name: "[SA-11] Bandit Python SAST"
+        args: ['-c', '.bandit.yaml', '-r', 'api/', '-ll']
+        files: ^api/.*\.py$
+
+  # ===========================================================================
+  # DOCKERFILE SECURITY (CM-2)
+  # ===========================================================================
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.1-beta
+    hooks:
+      - id: hadolint-docker
+        name: "[CM-2] Hadolint Dockerfile Lint"
+        args: ['--config', '.hadolint.yaml']
+
+  # ===========================================================================
+  # KUBERNETES MANIFEST VALIDATION (AC-6, CM-2)
+  # ===========================================================================
+  - repo: https://github.com/open-policy-agent/conftest
+    rev: v0.49.1
+    hooks:
+      - id: conftest
+        name: "[CM-3] Conftest OPA Policy Check"
+        args: ['test', '--policy', 'GP-Copilot/opa-package']
+        files: ^infrastructure/.*\.yaml$
+
+  # ===========================================================================
+  # YAML/JSON LINTING
+  # ===========================================================================
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: "YAML Lint"
+        args: ['-c', '.yamllint.yaml']
+        files: \.(yaml|yml)$
+
+  # ===========================================================================
+  # PYTHON FORMATTING (Optional)
+  # ===========================================================================
+  - repo: https://github.com/psf/black
+    rev: 24.2.0
+    hooks:
+      - id: black
+        name: "Black Python Formatter"
+        language_version: python3.11
+        files: ^api/.*\.py$
+
+  # ===========================================================================
+  # CUSTOM FEDRAMP VALIDATION HOOK
+  # ===========================================================================
+  - repo: local
+    hooks:
+      - id: fedramp-validation
+        name: "[FedRAMP] Pre-Commit Validation"
+        entry: bash
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [commit]
+        verbose: true
+        args:
+          - -c
+          - |
+            echo "🛡️  FedRAMP Moderate Pre-Commit Validation"
+            echo ""
+
+            # Check for security contexts in K8s manifests
+            if git diff --cached --name-only | grep -q "^infrastructure/.*\.yaml$"; then
+              echo "Checking Kubernetes manifests for FedRAMP compliance..."
+
+              for file in $(git diff --cached --name-only | grep "^infrastructure/.*\.yaml$"); do
+                if [ -f "$file" ]; then
+                  # AC-6: Check for runAsNonRoot
+                  if grep -q "kind: Deployment" "$file" || grep -q "kind: StatefulSet" "$file"; then
+                    if ! grep -q "runAsNonRoot: true" "$file"; then
+                      echo "❌ AC-6 Violation: $file missing runAsNonRoot: true"
+                      echo "   FedRAMP Moderate requires all containers run as non-root"
+                      exit 1
+                    fi
+                  fi
+
+                  # CM-2: Check for resource limits
+                  if grep -q "kind: Deployment" "$file" || grep -q "kind: StatefulSet" "$file"; then
+                    if ! grep -q "resources:" "$file"; then
+                      echo "⚠️  CM-2 Warning: $file missing resource limits"
+                      echo "   Consider adding requests/limits for cost control"
+                    fi
+                  fi
+                fi
+              done
+            fi
+
+            # Check Python files for weak cryptography
+            if git diff --cached --name-only | grep -q "\.py$"; then
+              echo "Checking Python files for weak cryptography..."
+
+              for file in $(git diff --cached --name-only | grep "\.py$"); do
+                if [ -f "$file" ]; then
+                  # IA-5(1): Check for MD5
+                  if git diff --cached "$file" | grep -i "hashlib.md5"; then
+                    echo "❌ IA-5(1) Violation: $file uses MD5 hashing"
+                    echo "   FedRAMP prohibits weak crypto (use bcrypt/scrypt/argon2)"
+                    exit 1
+                  fi
+
+                  # IA-5(7): Check for hardcoded passwords
+                  if git diff --cached "$file" | grep -E "(password|passwd|pwd)\s*=\s*['\"][^'\"]+['\"]"; then
+                    echo "⚠️  IA-5(7) Warning: $file may contain hardcoded password"
+                  fi
+                fi
+              done
+            fi
+
+            echo "✅ FedRAMP pre-commit validation passed"
+            exit 0
+
+# =============================================================================
+# PRE-COMMIT CI (Optional)
+# =============================================================================
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    Co-Authored-By: pre-commit.ci <noreply@pre-commit.ci>
+  autofix_prs: true
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: [fedramp-validation]  # Skip custom hook in CI
+  submodules: false

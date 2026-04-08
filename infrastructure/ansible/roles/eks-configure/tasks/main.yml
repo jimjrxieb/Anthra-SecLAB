@@ -1,0 +1,154 @@
+# eks-configure — Configure EKS cluster for staging
+# NIST 800-53: CM-2 (Baseline Configuration), AC-6 (Least Privilege)
+#
+# EKS manages the control plane and nodes. This role configures:
+#   - kubeconfig for access
+#   - AWS Load Balancer Controller (ingress)
+#   - EBS CSI driver (persistent volumes)
+#   - Cluster Autoscaler (optional)
+#
+# The OS-level roles (k3s-install, k3s-harden, auditd, cloudwatch-agent)
+# are NOT needed on EKS because:
+#   - No SSH access to managed nodes
+#   - CloudTrail replaces auditd
+#   - Container Insights replaces CloudWatch agent
+#   - EKS handles node OS hardening
+
+---
+# --- Kubeconfig ---
+
+- name: Update kubeconfig for EKS cluster
+  ansible.builtin.command:
+    cmd: >-
+      aws eks update-kubeconfig
+      --name {{ project_name }}-{{ environment }}-eks
+      --region {{ aws_region }}
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  changed_when: true
+  vars:
+    project_name: "anthra"
+    environment: "staging"
+    aws_region: "us-east-1"
+
+- name: Verify cluster access
+  ansible.builtin.command:
+    cmd: kubectl get nodes
+  become_user: ubuntu
+  register: eks_nodes
+  changed_when: false
+
+- name: Display EKS nodes
+  ansible.builtin.debug:
+    var: eks_nodes.stdout_lines
+
+# --- AWS Load Balancer Controller (replaces Traefik on EKS) ---
+
+- name: Install Helm
+  ansible.builtin.shell: |
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Add EKS Helm repo
+  ansible.builtin.command:
+    cmd: helm repo add eks https://aws.github.io/eks-charts
+  become_user: ubuntu
+  changed_when: true
+  failed_when: false
+
+- name: Update Helm repos
+  ansible.builtin.command:
+    cmd: helm repo update
+  become_user: ubuntu
+  changed_when: true
+
+- name: Install AWS Load Balancer Controller
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller
+      --namespace kube-system
+      --set clusterName={{ project_name }}-{{ environment }}-eks
+      --set serviceAccount.create=true
+      --set serviceAccount.name=aws-load-balancer-controller
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  changed_when: true
+  vars:
+    project_name: "anthra"
+    environment: "staging"
+
+# --- EBS CSI Driver (persistent volumes) ---
+
+- name: Install EBS CSI Driver
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install aws-ebs-csi-driver eks/aws-ebs-csi-driver
+      --namespace kube-system
+      --set controller.serviceAccount.create=true
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  changed_when: true
+
+# --- ArgoCD ---
+
+- name: Create argocd namespace
+  ansible.builtin.command:
+    cmd: kubectl create namespace argocd --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  failed_when: false
+  changed_when: true
+
+- name: Install ArgoCD
+  ansible.builtin.command:
+    cmd: >-
+      kubectl apply -n argocd -f
+      https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  changed_when: true
+
+- name: Wait for ArgoCD server
+  ansible.builtin.command:
+    cmd: >-
+      kubectl wait --for=condition=available deployment/argocd-server
+      -n argocd --timeout=300s
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  changed_when: false
+
+- name: Get ArgoCD admin password
+  ansible.builtin.command:
+    cmd: >-
+      kubectl -n argocd get secret argocd-initial-admin-secret
+      -o jsonpath='{.data.password}'
+      --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  register: argocd_password_b64
+  changed_when: false
+
+# --- Create portfolio namespace ---
+
+- name: Create portfolio namespace
+  ansible.builtin.command:
+    cmd: kubectl create namespace portfolio --kubeconfig /home/ubuntu/.kube/config
+  become_user: ubuntu
+  failed_when: false
+  changed_when: true
+
+- name: Display EKS configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "EKS cluster configured for staging:"
+      - "  - kubeconfig updated"
+      - "  - AWS Load Balancer Controller installed"
+      - "  - EBS CSI Driver installed"
+      - "  - ArgoCD installed"
+      - "  - ArgoCD password: {{ argocd_password_b64.stdout | b64decode }}"
+      - "  - portfolio namespace created"
+      - ""
+      - "What EKS handles that k3s needs Ansible for:"
+      - "  - Node OS hardening (managed nodes)"
+      - "  - Audit logging (CloudTrail)"
+      - "  - Host metrics (Container Insights)"
+      - "  - Control plane HA (3 AZ)"

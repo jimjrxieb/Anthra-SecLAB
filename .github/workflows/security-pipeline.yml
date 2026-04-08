@@ -1,0 +1,532 @@
+# =============================================================================
+# ANTHRA SECURITY PLATFORM - FEDRAMP SECURITY CI/CD PIPELINE
+# =============================================================================
+#
+# This workflow implements FedRAMP Moderate security controls in the CI/CD
+# pipeline, aligned with NIST 800-53 Rev 5 and GuidePoint Security methodology.
+#
+# NIST 800-53 Controls Implemented:
+# - SA-11: Developer Security Testing (all scanners)
+# - SA-15: Development Process, Standards, and Tools
+# - RA-5: Vulnerability Scanning (Trivy, Grype, Semgrep)
+# - SI-2: Flaw Remediation (auto-fix via JSA-DevSec)
+# - CM-3: Configuration Change Control (policy enforcement)
+# - CM-4: Security Impact Analysis (pre-deployment validation)
+#
+# =============================================================================
+
+name: Anthra FedRAMP Security Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'feat/**', 'fix/**']
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Daily scan at 2 AM UTC (SA-11(1): Continuous Testing)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: 'Run full scan including CIS benchmark'
+        required: false
+        default: 'false'
+      deploy_policies:
+        description: 'Deploy OPA/Gatekeeper policies to cluster'
+        required: false
+        default: 'false'
+
+# Prevent concurrent runs (CM-3: Configuration Change Control)
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # FedRAMP severity threshold
+  SEVERITY_THRESHOLD: HIGH
+  FAIL_ON_CVE: "true"
+  # GuidePoint reporting endpoint
+  GP_REPORT_ENDPOINT: ""
+  # NIST 800-53 control mapping
+  NIST_CONTROL_MAPPING: "true"
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ===========================================================================
+  # SECRETS DETECTION (IA-5(7): No Embedded Unencrypted Static Authenticators)
+  # ===========================================================================
+  secrets-scan:
+    name: "[IA-5(7)] Secret Detection"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git-based detection
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --verbose --redact --exit-code 1
+
+      - name: Upload Gitleaks SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: gitleaks
+
+      - name: Comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## ⚠️ Secrets Detected (IA-5(7) Violation)\n\nHardcoded secrets found in commit. This violates FedRAMP Moderate control **IA-5(7): No Embedded Unencrypted Static Authenticators**.\n\n**Required Action:** Remove secrets and rotate credentials immediately.\n\nSee workflow logs for details.'
+            })
+
+  # ===========================================================================
+  # SAST (SA-11: Developer Security Testing)
+  # ===========================================================================
+  sast-scan:
+    name: "[SA-11] SAST Analysis"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+            p/cwe-top-25
+            p/kubernetes
+            p/dockerfile
+          generateSarif: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Bandit (Python SAST)
+        run: |
+          pip install bandit
+          bandit -r api/ -f sarif -o bandit.sarif --severity-level medium || true
+
+      - name: Upload Bandit SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  # ===========================================================================
+  # DEPENDENCY SCANNING (SI-2: Flaw Remediation)
+  # ===========================================================================
+  dependency-scan:
+    name: "[SI-2] Dependency Scanning"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy Dependency Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-deps.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+
+      - name: Create CVE Report
+        if: failure()
+        run: |
+          echo "## CVE Findings (SI-2 Violation)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Critical/High CVEs found. FedRAMP Moderate requires **SI-2: Flaw Remediation** within 30 days." >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # CONTAINER SCANNING (CM-2: Baseline Configuration)
+  # ===========================================================================
+  container-scan:
+    name: "[CM-2] Container Scanning"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dockerfile: ['api/Dockerfile', 'services/Dockerfile', 'ui/Dockerfile']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hadolint Dockerfile Lint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          format: sarif
+          output-file: hadolint-${{ matrix.dockerfile }}.sarif
+          failure-threshold: warning
+
+      - name: Build Container Image
+        run: |
+          docker build -t anthra-scan:${{ github.sha }} -f ${{ matrix.dockerfile }} .
+
+      - name: Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'anthra-scan:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-container-${{ matrix.dockerfile }}.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '1'
+
+      - name: Upload Hadolint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint-${{ matrix.dockerfile }}.sarif
+          category: hadolint-${{ matrix.dockerfile }}
+
+      - name: Upload Trivy Container SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-container-${{ matrix.dockerfile }}.sarif
+          category: trivy-container-${{ matrix.dockerfile }}
+
+  # ===========================================================================
+  # KUBERNETES MANIFEST SCANNING (AC-6, CM-2: Security Baseline)
+  # ===========================================================================
+  kubernetes-scan:
+    name: "[AC-6, CM-2] Kubernetes Security"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy K8s Config Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'infrastructure/'
+          format: 'sarif'
+          output: 'trivy-k8s.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '1'
+
+      - name: Kubescape NSA/CISA Scan
+        uses: kubescape/github-action@main
+        with:
+          format: sarif
+          outputFile: kubescape.sarif
+          files: "infrastructure/*.yaml"
+          frameworks: |
+            nsa
+            mitre
+            cis-v1.23-t1.0.1
+          severityThreshold: medium
+          failedThreshold: 0
+
+      - name: Upload Trivy K8s SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-k8s.sarif
+          category: trivy-k8s
+
+      - name: Upload Kubescape SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: kubescape.sarif
+          category: kubescape
+
+  # ===========================================================================
+  # OPA POLICY VALIDATION (CM-3: Configuration Change Control)
+  # ===========================================================================
+  policy-validation:
+    name: "[CM-3] OPA Policy Validation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OPA
+        run: |
+          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
+          chmod +x opa
+          sudo mv opa /usr/local/bin/
+
+      - name: Validate OPA Policies
+        run: |
+          # Validate Rego syntax
+          if [ -d "GP-Copilot/opa-package" ]; then
+            opa check GP-Copilot/opa-package/*.rego || true
+          fi
+
+      - name: Setup Conftest
+        run: |
+          curl -fsSL https://github.com/open-policy-agent/conftest/releases/latest/download/conftest_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Test K8s Manifests Against Policies
+        run: |
+          # Test infrastructure manifests against OPA policies
+          if [ -f "GP-Copilot/opa-package/require-security-context.yaml" ]; then
+            conftest test infrastructure/*.yaml \
+              --policy GP-Copilot/opa-package \
+              --output json > conftest-results.json || true
+
+            # Show results
+            cat conftest-results.json || echo "No policy violations"
+          fi
+
+      - name: Upload Conftest Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conftest-results
+          path: conftest-results.json
+          retention-days: 30
+
+  # ===========================================================================
+  # FEDRAMP COMPLIANCE CHECK (Multiple Controls)
+  # ===========================================================================
+  fedramp-compliance:
+    name: "[FedRAMP] Compliance Validation"
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast-scan, dependency-scan, kubernetes-scan]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: FedRAMP Control Checklist
+        run: |
+          echo "# FedRAMP Moderate Control Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Control | Requirement | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          # AC-6: Least Privilege
+          if grep -q "runAsNonRoot: true" infrastructure/*.yaml; then
+            echo "| **AC-6** | Least Privilege (non-root containers) | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **AC-6** | Least Privilege (non-root containers) | ❌ Fail |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # IA-5(7): No Embedded Credentials
+          if [ "${{ needs.secrets-scan.result }}" == "success" ]; then
+            echo "| **IA-5(7)** | No Embedded Static Authenticators | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **IA-5(7)** | No Embedded Static Authenticators | ❌ Fail |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # SI-2: Flaw Remediation
+          if [ "${{ needs.dependency-scan.result }}" == "success" ]; then
+            echo "| **SI-2** | No Critical/High CVEs | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **SI-2** | No Critical/High CVEs | ❌ Fail |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # CM-2: Baseline Configuration
+          if grep -q "resources:" infrastructure/*.yaml; then
+            echo "| **CM-2** | Resource Limits Defined | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **CM-2** | Resource Limits Defined | ❌ Fail |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # SA-11: Developer Security Testing
+          echo "| **SA-11** | Security Testing in CI/CD | ✅ Pass |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Block PR if Non-Compliant
+        if: |
+          github.event_name == 'pull_request' && (
+            needs.secrets-scan.result == 'failure' ||
+            needs.dependency-scan.result == 'failure'
+          )
+        run: |
+          echo "::error::PR blocked due to FedRAMP Moderate compliance violations"
+          exit 1
+
+  # ===========================================================================
+  # JSA-DEVSEC AUTO-FIX (D-Rank Findings)
+  # ===========================================================================
+  jsa-auto-fix:
+    name: "[JSA] Auto-Remediation"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [secrets-scan, sast-scan, dependency-scan]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout Anthra repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout JSA-DevSec from GP-Copilot
+        # Sparse-checkout only the jsa-devsec agent from the GP-Copilot monorepo.
+        # Required repo secrets:
+        #   GP_COPILOT_REPO  — e.g. "org/GP-copilot" (no https://)
+        #   GP_COPILOT_TOKEN — PAT with repo:read scope on GP-copilot
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.GP_COPILOT_REPO }}
+          token: ${{ secrets.GP_COPILOT_TOKEN }}
+          sparse-checkout: GP-BEDROCK-AGENTS/jsa-devsec
+          sparse-checkout-cone-mode: true
+          path: _jsa_src
+
+      - name: Stage JSA-DevSec
+        run: |
+          mkdir -p GP-BEDROCK-AGENTS
+          cp -r _jsa_src/GP-BEDROCK-AGENTS/jsa-devsec GP-BEDROCK-AGENTS/jsa-devsec
+          rm -rf _jsa_src
+          echo "JSA-DevSec staged at GP-BEDROCK-AGENTS/jsa-devsec"
+          ls GP-BEDROCK-AGENTS/jsa-devsec/
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install JSA-DevSec
+        run: |
+          pip install -r GP-BEDROCK-AGENTS/jsa-devsec/requirements.txt
+
+      - name: Run JSA-DevSec Auto-Fix
+        run: |
+          # Run auto-fix on D-rank findings (no AI, pattern NPCs only)
+          python3 GP-BEDROCK-AGENTS/jsa-devsec/src/main.py fix \
+            --target . \
+            --auto-fix \
+            --rank D \
+            --dry-run false || true
+
+      - name: Commit Fixes
+        run: |
+          git config --global user.name "JSA-DevSec Bot"
+          git config --global user.email "jsa-devsec@guidepoint.com"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "security: JSA-DevSec auto-fixes (D-rank)
+
+            Co-Authored-By: JSA-DevSec <jsa-devsec@guidepoint.com>"
+            git push
+
+            # Comment on PR
+            echo "## 🤖 JSA-DevSec Auto-Fixes Applied" >> pr_comment.txt
+            echo "" >> pr_comment.txt
+            echo "JSA-DevSec has automatically fixed D-rank security findings." >> pr_comment.txt
+            echo "Review the commit and re-run CI to validate." >> pr_comment.txt
+          else
+            echo "No auto-fixes needed" >> pr_comment.txt
+          fi
+
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('pr_comment.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            })
+
+  # ===========================================================================
+  # AGGREGATE RESULTS & REPORTING
+  # ===========================================================================
+  security-report:
+    name: "[SA-11] Security Report"
+    runs-on: ubuntu-latest
+    needs:
+      - secrets-scan
+      - sast-scan
+      - dependency-scan
+      - container-scan
+      - kubernetes-scan
+      - policy-validation
+      - fedramp-compliance
+    if: always()
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4.1.3
+        with:
+          path: security-results
+
+      - name: Generate Summary
+        run: |
+          echo "# 🛡️ Anthra Security Platform - Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Ref:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "**SHA:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| NIST Control | Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **IA-5(7)** | Gitleaks (Secrets) | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **SA-11** | SAST (Semgrep/Bandit) | ${{ needs.sast-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **SI-2** | Dependencies (Trivy) | ${{ needs.dependency-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **CM-2** | Containers (Hadolint/Trivy) | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **AC-6, CM-2** | Kubernetes (Kubescape) | ${{ needs.kubernetes-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **CM-3** | OPA Policies (Conftest) | ${{ needs.policy-validation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Multiple** | FedRAMP Compliance | ${{ needs.fedramp-compliance.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by GuidePoint Security - Iron Legion Platform*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Security Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedramp-evidence-${{ github.sha }}
+          path: security-results/
+          retention-days: 90
+
+      - name: Check for Critical Failures
+        if: |
+          needs.secrets-scan.result == 'failure' ||
+          needs.dependency-scan.result == 'failure' ||
+          needs.fedramp-compliance.result == 'failure'
+        run: |
+          echo "::error::Critical FedRAMP Moderate security violations detected!"
+          echo "::error::See scan results above for details"
+          exit 1

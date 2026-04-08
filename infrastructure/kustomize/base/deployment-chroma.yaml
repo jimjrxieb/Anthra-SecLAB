@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-chroma
+  namespace: portfolio
+  labels:
+    app: portfolio-chroma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-chroma
+  template:
+    metadata:
+      labels:
+        app: portfolio-chroma
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: chroma
+          image: chromadb/chroma@sha256:19dd87334f64383b2d386cd4216b5331044642f62688e8397c12da4e38bec990
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: CHROMA_PERSIST_DIRECTORY
+              value: "/chroma/data"
+            - name: IS_PERSISTENCE
+              value: "TRUE"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+            - name: chroma-data
+              mountPath: /chroma/data
+      volumes:
+        - name: chroma-data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          emptyDir: {}

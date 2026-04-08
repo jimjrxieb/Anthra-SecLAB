@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: anthra
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: local
+
+patches:
+  # Relax PSS to baseline — postgres needs writable FS
+  - target:
+      kind: Namespace
+      name: anthra
+    patch: |
+      - op: replace
+        path: /metadata/labels/pod-security.kubernetes.io~1enforce
+        value: baseline
+  # NodePort for API
+  - target:
+      kind: Service
+      name: anthra-api
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080
+  # NodePort for UI
+  - target:
+      kind: Service
+      name: anthra-ui
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30000
+  # NodePort for log-ingest
+  - target:
+      kind: Service
+      name: anthra-log-ingest
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30090
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: anthra-db-secret
+    literals:
+      - password=anthra123
+
+configMapGenerator:
+  - name: anthra-db-init
+    files:
+      - init.sql=init.sql

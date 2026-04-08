@@ -1,0 +1,134 @@
+# k3s-harden — CIS Kubernetes Benchmark + NIST hardening
+# NIST 800-53: AC-6 (Least Privilege), SC-7 (Boundary Protection),
+#              CM-6 (Configuration Settings), CM-7 (Least Functionality)
+
+---
+# --- OS Hardening (CM-6, CM-7) ---
+
+- name: Disable unused services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - snapd
+    - unattended-upgrades
+  failed_when: false
+
+- name: Set sysctl security parameters (SC-7)
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { key: "net.ipv4.ip_forward", value: "1" }                    # Required for k3s
+    - { key: "net.ipv4.conf.all.rp_filter", value: "1" }            # Reverse path filtering
+    - { key: "net.ipv4.conf.default.rp_filter", value: "1" }
+    - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }     # No ICMP redirects
+    - { key: "net.ipv4.conf.default.accept_redirects", value: "0" }
+    - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+    - { key: "net.ipv6.conf.all.accept_redirects", value: "0" }
+    - { key: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }   # No smurf attacks
+    - { key: "net.ipv4.tcp_syncookies", value: "1" }                # SYN flood protection
+    - { key: "kernel.randomize_va_space", value: "2" }               # Full ASLR
+
+- name: Set file permissions on k3s config (AC-6)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/etc/rancher/k3s/k3s.yaml", mode: "0600" }
+    - { path: "/var/lib/rancher/k3s/server", mode: "0700" }
+  failed_when: false
+
+# --- SSH Hardening (AC-17, IA-2) ---
+
+- name: Harden SSH configuration
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
+    - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
+    - { regexp: "^#?X11Forwarding", line: "X11Forwarding no" }
+    - { regexp: "^#?MaxAuthTries", line: "MaxAuthTries 3" }
+    - { regexp: "^#?ClientAliveInterval", line: "ClientAliveInterval 300" }
+    - { regexp: "^#?ClientAliveCountMax", line: "ClientAliveCountMax 2" }
+    - { regexp: "^#?AllowTcpForwarding", line: "AllowTcpForwarding no" }
+  notify: Restart sshd
+
+# --- UFW Firewall (SC-7) ---
+
+- name: Install UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Set UFW default policies
+  community.general.ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: Allow SSH
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow HTTP
+  community.general.ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+
+- name: Allow HTTPS
+  community.general.ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+
+- name: Allow K8s API
+  community.general.ufw:
+    rule: allow
+    port: "6443"
+    proto: tcp
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+
+# --- K8s Pod Security Standards (AC-6) ---
+
+- name: Create Pod Security Standards labels for default namespace
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl label namespace default
+      pod-security.kubernetes.io/enforce=restricted
+      pod-security.kubernetes.io/warn=restricted
+      pod-security.kubernetes.io/audit=restricted
+      --overwrite
+  changed_when: true
+
+# --- Automatic Security Updates (SI-2) ---
+
+- name: Install and configure unattended-upgrades for security patches
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Enable automatic security updates
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+

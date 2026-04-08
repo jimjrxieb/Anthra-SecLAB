@@ -1,0 +1,30 @@
+name: K8s Policy Check
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/**'
+      - 'policies/conftest/**'
+
+jobs:
+  policy-check:
+    name: Conftest Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install conftest
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/open-policy-agent/conftest/releases/latest | grep tag_name | cut -d '"' -f4)
+          curl -sLO https://github.com/open-policy-agent/conftest/releases/download/${VERSION}/conftest_${VERSION#v}_Linux_x86_64.tar.gz
+          tar xzf conftest_*.tar.gz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Test K8s manifests against policies
+        run: |
+          echo 'Testing manifests in infrastructure/ against policies/conftest/'
+          conftest test infrastructure/ \
+            --policy policies/conftest/ \
+            --all-namespaces \
+            --output stdout
+        # Exit 1 if any FAIL — blocks merge
