@@ -1,0 +1,103 @@
+# Fluent Bit Helm Values — Anthra-SecLAB
+#
+# WHAT: Lightweight log forwarder. Runs as DaemonSet on every node,
+#       tails container logs, enriches with Kubernetes metadata, and
+#       ships to Splunk via HEC (HTTP Event Collector).
+#
+# WHY FLUENT BIT: CNCF graduated. Written in C — ~450KB binary, uses
+#       ~5MB RAM per node. 10x lighter than Fluentd. The standard log
+#       shipper for Kubernetes -> Splunk pipelines.
+#
+# WHY NOT FLUENTD: Fluentd is Ruby-based, heavier (~50MB RAM), and
+#       has a larger attack surface. Fluent Bit does everything we need
+#       for simple log forwarding.
+#
+# NIST CONTROLS:
+#   AU-2  (Event Logging) — captures all container stdout/stderr
+#   AU-3  (Content of Audit Records) — enriches with pod name, namespace, labels
+#   AU-4  (Audit Log Storage Capacity) — ships to Splunk (external storage)
+#   AU-6  (Audit Record Review) — Splunk enables search and analysis
+#
+# SPLUNK CONNECTION:
+#   Host: host.k3d.internal (resolves to host machine from inside k3d)
+#   Port: 8088 (HEC)
+#   Token: gp-local-hec-token-2026
+#   TLS: On (Splunk HEC is HTTPS)
+#   TLS Verify: Off (self-signed cert in lab)
+
+# WHY DaemonSet: Runs one Fluent Bit pod per node. Every container's
+# logs on that node are captured. If a node has no Fluent Bit, its
+# logs are invisible to Splunk.
+kind: DaemonSet
+
+image:
+  repository: cr.fluentbit.io/fluent/fluent-bit
+  tag: "3.2"
+
+# WHY these resources: Fluent Bit is lightweight by design. 64Mi is
+# generous for a small cluster. Production might need 128-256Mi if
+# log volume is high.
+resources:
+  limits:
+    memory: 128Mi
+    cpu: 200m
+  requests:
+    memory: 64Mi
+    cpu: 50m
+
+config:
+  # WHY json parser: anthra-api outputs structured JSON logs.
+  # Without this parser, Splunk sees raw text instead of searchable fields.
+  customParsers: |
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+
+  # Input: tail container logs from every pod
+  inputs: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            cri
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+  # Filter: enrich with Kubernetes metadata
+  # WHY: Without this, Splunk sees log lines with no context — you
+  # wouldn't know which pod, namespace, or deployment generated the log.
+  # This filter adds: pod_name, namespace_name, container_name, labels.
+  filters: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+  # Output: ship to Splunk HEC
+  # WHY host.k3d.internal: k3d provides this DNS name to resolve
+  # the host machine's IP from inside the cluster. gp-splunk runs
+  # on the host, not inside k3d.
+  # WHY tls On, tls.verify Off: Splunk HEC uses HTTPS but with a
+  # self-signed certificate in the lab. Production would use a real cert.
+  outputs: |
+    [OUTPUT]
+        Name            splunk
+        Match           kube.*
+        Host            host.k3d.internal
+        Port            8088
+        Splunk_Token    gp-local-hec-token-2026
+        Splunk_Send_Raw Off
+        TLS             On
+        TLS.Verify      Off
+        Retry_Limit     5
