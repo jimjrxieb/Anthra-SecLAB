@@ -50,13 +50,12 @@ falcosidekick:
   config:
     splunk:
       # WHY host.k3d.internal: Same as Fluent Bit — reaches gp-splunk
-      # on the host machine.
-      hostport: "https://host.k3d.internal:8088"
+      # on the host machine. Full URL to HEC collector endpoint required.
+      host: "https://host.k3d.internal:8088/services/collector"
       token: "gp-local-hec-token-2026"
       # WHY sourcetype: Separate sourcetype so Splunk can filter Falco
       # alerts from regular container logs. Search with:
       #   sourcetype="falco" | table rule priority output
-      sourcetype: "falco"
       minimumpriority: "warning"
       checkcert: false
 
@@ -102,22 +101,15 @@ customRules:
       priority: WARNING
       tags: [anthra, credentials, mitre_credential_access]
 
-    # Detect unexpected outbound connections from anthra containers
-    # WHY: anthra containers should only talk to each other and to
-    # the database. Outbound connections to the internet could be
-    # data exfiltration or C2 callback.
-    - rule: Unexpected Outbound from Anthra
-      desc: Detect outbound connections from anthra to external IPs
-      condition: >
-        outbound and container and
-        k8s.ns.name = "anthra" and
-        not (fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16))
-      output: >
-        Unexpected outbound connection from anthra
-        (command=%proc.cmdline connection=%fd.name
-        container=%container.name pod=%k8s.pod.name dest=%fd.sip)
-      priority: WARNING
-      tags: [anthra, network, mitre_exfiltration]
+    # TODO: Outbound connection detection rule
+    # Falco's fd.sip field does not support CIDR or startswith for IP
+    # filtering. Detecting unexpected outbound connections requires either:
+    #   1. Falco network plugin (separate install)
+    #   2. NetworkPolicy (preventive, not detective — handled in OSI-MODEL L3)
+    #   3. Suricata/Zeek for network-level detection
+    # For now, shell access and credential access rules cover the
+    # highest-value detections. Add outbound rule when network plugin
+    # is deployed.
 
 # Resources for lab
 resources:

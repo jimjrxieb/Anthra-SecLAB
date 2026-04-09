@@ -21,11 +21,11 @@ grafana:
   adminPassword: "SecLAB2026!"
 
   # WHY NodePort: Browser access from host machine. Production would
-  # use Ingress with TLS. Port 30300 chosen to not conflict with app
-  # ports (30000, 30080, 30090).
+  # use Ingress with TLS. Port 30030 chosen to stay within k3d's
+  # mapped port range (30000-30100) and not conflict with app ports.
   service:
     type: NodePort
-    nodePort: 30300
+    nodePort: 30030
 
   # WHY no persistence: Dashboards are code — they're JSON files we
   # import. If Grafana restarts, dashboards auto-reload from ConfigMap.
