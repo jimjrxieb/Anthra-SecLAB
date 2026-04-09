@@ -1,0 +1,54 @@
+# k3d cluster configuration for Anthra-SecLAB
+#
+# WHY k3d: Runs k3s (lightweight Kubernetes) inside Docker containers.
+# Gives you a real multi-node cluster on a single machine. Production-like
+# enough to test NetworkPolicies, RBAC, admission control, and runtime
+# detection — without the cost of EKS or the weight of kubeadm.
+#
+# WHY these settings:
+# - 1 server + 2 agents: Simulates a real cluster (control plane + workers).
+#   DaemonSets (Falco, Fluent Bit) run on all 3 nodes like production.
+# - Port mappings: NodePort services need host ports exposed through k3d's
+#   load balancer. Each port maps to a specific service.
+# - Traefik disabled: We use NodePort, not Ingress. Keeps the lab simple
+#   and avoids conflict with the SOC stack's own services.
+# - host.k3d.internal: Allows pods to reach the host machine where
+#   gp-splunk runs. Without this, Fluent Bit and Falcosidekick can't
+#   ship logs/alerts to Splunk.
+
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: seclab
+servers: 1
+agents: 2
+ports:
+  # Target application
+  - port: 30000:30000   # anthra-ui (React frontend)
+    nodeFilters:
+      - loadbalancer
+  - port: 30080:30080   # anthra-api (FastAPI backend)
+    nodeFilters:
+      - loadbalancer
+  - port: 30090:30090   # anthra-log-ingest (Go service)
+    nodeFilters:
+      - loadbalancer
+  # SOC stack
+  - port: 30300:30300   # Grafana dashboards
+    nodeFilters:
+      - loadbalancer
+options:
+  k3s:
+    extraArgs:
+      # WHY disable traefik: We don't need an ingress controller.
+      # All services use NodePort. Removing traefik saves ~100MB RAM
+      # and eliminates a component that could interfere with network
+      # policy testing.
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+  # WHY hostAliases: Enables host.k3d.internal DNS resolution inside
+  # the cluster. Pods can reach gp-splunk on the host via this name.
+  # Without it, we'd need to hardcode the Docker bridge IP.
+  kubeAPI:
+    hostIP: "0.0.0.0"
