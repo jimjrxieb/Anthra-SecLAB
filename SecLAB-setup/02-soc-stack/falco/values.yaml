@@ -1,0 +1,129 @@
+# Falco Helm Values — Anthra-SecLAB
+#
+# WHAT: Runtime security tool. Monitors Linux syscalls and Kubernetes
+#       audit events. Fires alerts when suspicious behavior occurs —
+#       shell in container, sensitive file read, privilege escalation,
+#       unexpected network connection.
+#
+# WHY FALCO: CNCF graduated. Industry standard for container runtime
+#       detection. Sysdig open-sourced it. Replaces CrowdStrike Falcon
+#       and Sysdig Secure at the detection layer. Every enterprise SOC
+#       that runs containers has Falco or its paid equivalent.
+#
+# NIST CONTROLS:
+#   SI-4  (Information System Monitoring) — real-time syscall monitoring
+#   AU-2  (Event Logging) — security event detection and logging
+#   IR-4  (Incident Handling) — alerts enable incident response
+#   SI-3  (Malicious Code Protection) — detects suspicious runtime behavior
+#
+# ARCHITECTURE:
+#   Falco DaemonSet (every node) → detects events via eBPF
+#   Falcosidekick (1 pod) → receives alerts from Falco → forwards to Splunk HEC
+#   Flow: syscall → Falco rule match → JSON alert → Falcosidekick → Splunk
+
+# WHY modern_ebpf: eBPF is the modern approach to syscall monitoring.
+# No kernel module compilation needed. Safer than the legacy kernel
+# module driver. Works on k3d. If this fails on your kernel, fall
+# back to 'kmod' (kernel module) or 'ebpf' (legacy eBPF).
+driver:
+  kind: modern_ebpf
+
+# WHY JSON output: Structured output that Falcosidekick can parse
+# and forward. Human-readable text output is for debugging only.
+falco:
+  json_output: true
+  json_include_output_property: true
+  log_level: info
+
+  # WHY these priority thresholds: Falco rules have priorities
+  # (Emergency, Alert, Critical, Error, Warning, Notice, Info, Debug).
+  # We capture Warning and above. Debug/Info generate too much noise
+  # for a SOC — you'd drown in false positives.
+  priority: WARNING
+
+# WHY Falcosidekick: Falco generates alerts to stdout. Falcosidekick
+# is the router — it takes those alerts and sends them to Splunk,
+# Slack, PagerDuty, or wherever your SOC needs them. Without it,
+# alerts only exist in Falco's container logs.
+falcosidekick:
+  enabled: true
+  config:
+    splunk:
+      # WHY host.k3d.internal: Same as Fluent Bit — reaches gp-splunk
+      # on the host machine.
+      hostport: "https://host.k3d.internal:8088"
+      token: "gp-local-hec-token-2026"
+      # WHY sourcetype: Separate sourcetype so Splunk can filter Falco
+      # alerts from regular container logs. Search with:
+      #   sourcetype="falco" | table rule priority output
+      sourcetype: "falco"
+      minimumpriority: "warning"
+      checkcert: false
+
+# Custom rules loaded from ConfigMap
+customRules:
+  rules-custom.yaml: |
+    # --- Anthra-SecLAB Custom Falco Rules ---
+    # These rules are tuned for the anthra application specifically.
+    # They supplement the default Falco ruleset with app-aware detections.
+
+    # Detect shell access in any anthra container
+    # WHY: If someone gets a shell inside your app container, that's
+    # either an attacker or an engineer bypassing change management.
+    # Either way, the SOC needs to know immediately.
+    - rule: Shell in Anthra Container
+      desc: Detect shell spawned in anthra namespace containers
+      condition: >
+        spawned_process and container and
+        proc.name in (bash, sh, zsh, ash, dash) and
+        k8s.ns.name = "anthra"
+      output: >
+        Shell spawned in anthra container
+        (user=%user.name command=%proc.cmdline container=%container.name
+        pod=%k8s.pod.name namespace=%k8s.ns.name image=%container.image.repository)
+      priority: WARNING
+      tags: [anthra, shell, mitre_execution]
+
+    # Detect database credential file access
+    # WHY: anthra-db stores credentials. If a non-database container
+    # reads DB credential files, that's lateral movement or credential
+    # theft.
+    - rule: DB Credential Access in Anthra
+      desc: Detect access to database credential files in anthra namespace
+      condition: >
+        open_read and container and
+        k8s.ns.name = "anthra" and
+        (fd.name contains "password" or fd.name contains ".pgpass" or
+         fd.name contains "db-secret")
+      output: >
+        Database credential file accessed
+        (user=%user.name file=%fd.name command=%proc.cmdline
+        container=%container.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [anthra, credentials, mitre_credential_access]
+
+    # Detect unexpected outbound connections from anthra containers
+    # WHY: anthra containers should only talk to each other and to
+    # the database. Outbound connections to the internet could be
+    # data exfiltration or C2 callback.
+    - rule: Unexpected Outbound from Anthra
+      desc: Detect outbound connections from anthra to external IPs
+      condition: >
+        outbound and container and
+        k8s.ns.name = "anthra" and
+        not (fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16))
+      output: >
+        Unexpected outbound connection from anthra
+        (command=%proc.cmdline connection=%fd.name
+        container=%container.name pod=%k8s.pod.name dest=%fd.sip)
+      priority: WARNING
+      tags: [anthra, network, mitre_exfiltration]
+
+# Resources for lab
+resources:
+  limits:
+    memory: 512Mi
+    cpu: 500m
+  requests:
+    memory: 256Mi
+    cpu: 100m
