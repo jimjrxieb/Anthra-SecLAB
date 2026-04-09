@@ -1,0 +1,109 @@
+# kube-prometheus-stack Helm Values — Anthra-SecLAB
+#
+# WHAT: Prometheus (metrics collection) + Grafana (dashboards) +
+#       Alertmanager (alert routing) bundled as one Helm chart.
+#
+# WHY THIS STACK: De facto standard for Kubernetes monitoring.
+#       CNCF graduated. Every production cluster runs this.
+#       Gives you the CISO dashboard metrics: MTTD, MTTR, pod health,
+#       resource consumption, alert trends.
+#
+# NIST CONTROLS:
+#   SI-4  (Information System Monitoring) — continuous metrics collection
+#   AU-6  (Audit Record Review) — dashboards for metric analysis
+#   CA-7  (Continuous Monitoring) — automated health checks
+
+# --- Grafana ---
+grafana:
+  # WHY explicit password: Lab needs predictable access. Production
+  # would use SSO (Entra ID, Okta). Default auto-generated password
+  # is hard to retrieve.
+  adminPassword: "SecLAB2026!"
+
+  # WHY NodePort: Browser access from host machine. Production would
+  # use Ingress with TLS. Port 30300 chosen to not conflict with app
+  # ports (30000, 30080, 30090).
+  service:
+    type: NodePort
+    nodePort: 30300
+
+  # WHY no persistence: Dashboards are code — they're JSON files we
+  # import. If Grafana restarts, dashboards auto-reload from ConfigMap.
+  # No PVC needed. Production would persist user-created dashboards.
+  persistence:
+    enabled: false
+
+  # WHY sidecar: Automatically loads dashboard JSON files from ConfigMaps
+  # labeled 'grafana_dashboard: "1"'. Add new dashboards by creating
+  # ConfigMaps, not by clicking in the UI.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+
+  # Lab-appropriate resources
+  resources:
+    limits:
+      memory: 256Mi
+      cpu: 300m
+    requests:
+      memory: 128Mi
+      cpu: 100m
+
+# --- Prometheus ---
+prometheus:
+  prometheusSpec:
+    # WHY 7 days: Enough metrics history for lab scenarios (break on
+    # Monday, check metrics drift on Friday). Not so much that it eats
+    # disk. Production retains 15-90 days depending on compliance needs.
+    retention: 7d
+
+    # WHY these limits: k3d cluster has limited resources. Production
+    # Prometheus often needs 4-8GB RAM depending on cardinality.
+    resources:
+      limits:
+        memory: 512Mi
+        cpu: 500m
+      requests:
+        memory: 256Mi
+        cpu: 100m
+
+    # WHY lower storage: 5Gi is plenty for 7 days of a small cluster.
+    # Production would be 50-500Gi.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+# --- Alertmanager ---
+alertmanager:
+  # WHY enabled: Alertmanager routes alerts from Prometheus rules.
+  # Even in a lab, you want to see what alerts WOULD fire in production.
+  # Alerts go to Alertmanager → you check the Alertmanager UI.
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      limits:
+        memory: 128Mi
+        cpu: 100m
+      requests:
+        memory: 64Mi
+        cpu: 50m
+
+# --- Node Exporter ---
+# WHY enabled: Collects node-level metrics (CPU, memory, disk, network).
+# Runs as DaemonSet on every node. Without this, you only see pod
+# metrics, not the underlying infrastructure.
+nodeExporter:
+  enabled: true
+
+# --- kube-state-metrics ---
+# WHY enabled: Collects Kubernetes object state metrics (deployment
+# replicas, pod status, resource quotas). Without this, Prometheus
+# only sees resource usage, not Kubernetes-level health.
+kubeStateMetrics:
+  enabled: true
