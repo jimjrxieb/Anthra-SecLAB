@@ -1,0 +1,66 @@
+# Require Security Context — NIST AC-6 (Least Privilege), CM-7 (Least Functionality)
+#
+# WHY: Containers running as root can escape to the host if a vulnerability
+# exists in the container runtime. Running as non-root + dropping ALL
+# capabilities reduces the blast radius of a container compromise to
+# just the container itself.
+#
+# WHAT THIS BLOCKS (in enforce mode):
+#   - Containers without runAsNonRoot: true
+#   - Containers without drop: ["ALL"] in capabilities
+#   - Containers with allowPrivilegeEscalation: true
+#
+# MODE: Audit (logs violations but does NOT block). Switch to Enforce
+# when you trust the policy won't break your app.
+#
+# CySA+ RELEVANCE: This is defense in depth at the container layer.
+# Even if an attacker gets code execution inside a container, they
+# can't escalate to root or escape to the host.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-security-context
+  annotations:
+    policies.kyverno.io/title: Require Security Context
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Requires all containers to run as non-root with capabilities dropped.
+      Maps to NIST AC-6 and CM-7.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - anthra
+      validate:
+        message: "Containers must set runAsNonRoot: true (NIST AC-6)"
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+    - name: drop-all-capabilities
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - anthra
+      validate:
+        message: "Containers must drop ALL capabilities (NIST CM-7)"
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL

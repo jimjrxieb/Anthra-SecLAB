@@ -1,0 +1,58 @@
+# Require Labels — NIST CM-8 (Information System Component Inventory)
+#
+# WHY: Without labels, you can't answer "what is this pod?" or "who
+# owns this deployment?" Labels are metadata — they're how you inventory,
+# filter, and manage resources. An unlabeled resource is an untracked
+# asset.
+#
+# WHAT THIS BLOCKS (in enforce mode):
+#   - Deployments without 'app' label
+#   - Deployments without 'environment' label
+#
+# CySA+ RELEVANCE: Asset inventory (CM-8) is fundamental. You can't
+# protect what you don't know about. Labels make Kubernetes resources
+# queryable and auditable.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-labels
+  annotations:
+    policies.kyverno.io/title: Require Labels
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/description: >-
+      Requires Deployments to have 'app' and 'environment' labels.
+      Maps to NIST CM-8.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-app-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+              namespaces:
+                - anthra
+      validate:
+        message: "Deployments must have an 'app' label (NIST CM-8)"
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+    - name: require-environment-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+              namespaces:
+                - anthra
+      validate:
+        message: "Deployments must have an 'environment' label (NIST CM-8)"
+        pattern:
+          metadata:
+            labels:
+              environment: "?*"

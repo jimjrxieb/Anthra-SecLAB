@@ -1,0 +1,50 @@
+# Kyverno Helm Values — Anthra-SecLAB
+#
+# WHAT: Kubernetes-native policy engine. Intercepts API requests and
+#       validates them against policies BEFORE resources are created.
+#
+# WHY KYVERNO: Policies are YAML (not Rego like OPA/Gatekeeper). Same
+#       language as everything else in Kubernetes. Easier to read, write,
+#       and audit. CNCF graduated project.
+#
+# NIST CONTROLS:
+#   CM-7  (Least Functionality) — enforce minimal container permissions
+#   AC-6  (Least Privilege) — require non-root, drop capabilities
+#   CM-2  (Baseline Configuration) — no :latest tags, pinned versions
+#   CM-8  (Information System Component Inventory) — require labels
+#   SC-6  (Resource Availability) — require resource limits
+
+# WHY 1 replica: Lab cluster has limited resources. Production would
+# run 3 replicas for high availability. Kyverno is the gatekeeper —
+# if it goes down, no new resources can be created (fail-closed).
+admissionController:
+  replicas: 1
+
+# WHY background scanning: Scans existing resources against policies,
+# not just new ones. This catches misconfigurations that were deployed
+# before Kyverno was installed. In a SOC, you need to know about ALL
+# violations, not just new ones.
+backgroundController:
+  enabled: true
+
+# WHY cleanup controller disabled: Not needed for lab. It auto-deletes
+# resources on a schedule. We want to see violations, not auto-fix them.
+cleanupController:
+  enabled: false
+
+# WHY reports enabled: Generates PolicyReport CRDs that list every
+# resource that passes or fails each policy. This is your audit trail.
+# Query with: kubectl get policyreport -A
+reportsController:
+  enabled: true
+
+# Resource limits for lab — keep it lightweight
+admissionController:
+  container:
+    resources:
+      limits:
+        memory: 384Mi
+        cpu: 500m
+      requests:
+        memory: 128Mi
+        cpu: 100m

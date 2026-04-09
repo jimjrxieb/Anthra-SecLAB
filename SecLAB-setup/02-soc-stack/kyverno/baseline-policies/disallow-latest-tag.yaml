@@ -1,0 +1,45 @@
+# Disallow Latest Tag — NIST CM-2 (Baseline Configuration), SA-10 (Developer Config Mgmt)
+#
+# WHY: The :latest tag is mutable — it can point to different images at
+# different times. If you deploy :latest today and redeploy tomorrow,
+# you might get a completely different image. This breaks reproducibility
+# and makes it impossible to audit what's actually running.
+#
+# WHAT THIS BLOCKS (in enforce mode):
+#   - Container images with :latest tag
+#   - Container images with no tag at all (defaults to :latest)
+#
+# CySA+ RELEVANCE: Configuration management (CM-2) requires knowing
+# exactly what's deployed. :latest makes that impossible. Every image
+# should have a pinned tag (version number or SHA) so you can trace
+# exactly what code is running.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Requires container images to have a tag that is not 'latest'.
+      Maps to NIST CM-2 and SA-10.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: disallow-latest-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - anthra
+      validate:
+        message: "Image tag ':latest' is not allowed. Pin to a specific version (NIST CM-2)."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
