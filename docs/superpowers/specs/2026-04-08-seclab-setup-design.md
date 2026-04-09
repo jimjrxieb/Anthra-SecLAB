@@ -201,6 +201,22 @@ Key concept, certification relevance, interview talking point.
 | Splunk | http://localhost:8000 | SIEM — logs, alerts, investigation |
 | Grafana | http://localhost:30300 | Dashboards — metrics, health, SOC overview |
 
+## Report Output
+
+All reports, evidence, and scan outputs land in the centralized GP-S3 storage:
+
+```
+/home/jimmie/linkops-industries/GP-copilot/GP-S3/6-seclab-reports/
+├── evidence/YYYY-MM-DD/          # Scanner output from scenario runs (Falco alerts, kubescape JSON, etc.)
+├── governance/                    # Completed CISO governance briefs
+├── poam/                          # POA&M tracking documents
+└── dashboards/                    # Exported Grafana dashboard snapshots
+```
+
+The local `evidence/` directory in SecLAB is the working area. `tools/collect-evidence.sh` gathers scanner output there during scenario runs. Finalized reports get copied to `GP-S3/6-seclab-reports/` for centralized access across slots.
+
+**Why GP-S3:** GP-S3 is the centralized storage layer for the GP-Copilot framework. All engagement outputs (findings DBs, reports, knowledge base) live there. SecLAB reports follow the same pattern so they're accessible to JADE, other agents, and cross-slot reporting.
+
 ## Daily SOC Workflow (what this enables)
 
 1. Open Grafana — check cluster health dashboard, any red/amber alerts
@@ -208,3 +224,4 @@ Key concept, certification relevance, interview talking point.
 3. Check Kyverno reports — any policy violations on new deployments
 4. Investigate anything anomalous — drill into Falco alert → Splunk logs → Grafana metrics
 5. Document findings using OSI-MODEL governance templates
+6. Copy finalized evidence and reports to `GP-S3/6-seclab-reports/`
