@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: anthra-log-ingest
-  namespace: anthra
-  labels:
-    app: anthra-log-ingest
-automountServiceAccountToken: false
