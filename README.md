@@ -1,68 +1,51 @@
 # Anthra-SecLAB
 
-**Staging environment for [anthra.dev](https://anthra.dev)**
-**Operator:** Ghost Protocol (LinkOps Industries)
-**Purpose:** Break it. Fix it. Attack it. Remediate it. Prove the hardening works.
+**Security home lab for hands-on NIST 800-53 control implementation, break/fix training, and CISO governance reporting.**
 
-> **This is a security lab, not production.**
+**Operator:** Jimmie (LinkOps Industries)
+**Target Application:** [anthra.dev](https://anthra.dev) — deployed locally as the attack surface
+**Certifications:** Security+ (completed), CySA+ (studying), CKA (completed), CKS (studying)
+
+> Anthra is not a staging version of my portfolio. It is a deliberately vulnerable deployment of my portfolio application, running in a local k3s cluster with a full SOC tool stack, used as the target for security control validation across all 7 OSI layers.
 >
-> Anthra-SecLAB is the staging version of my real portfolio site. It exists to validate that every hardening measure, policy, and security control actually holds up under pressure. Think of it as Conftest for the entire 5 C's — not just policy validation, but full-stack attack and remediation across Code, Container, Cluster, Cloud, and Compliance.
->
-> Things will be intentionally broken here. Vulnerabilities will be introduced, exploited, and then remediated — with evidence at every step. If it survives SecLAB, it ships to production.
+> Two security tracks run against this single target application. Each track has its own playbooks, tools, templates, correct configurations, and best-practice recommendations — backed by the certifications I hold and the ones I'm studying for.
+
+---
+
+## Two Tracks, One Target
+
+| Track | Directory | Backed By | Focus |
+|-------|-----------|-----------|-------|
+| **OSI-MODEL Security** | `OSI-MODEL/` | Security+ (completed), CySA+ (studying) | Secure by layer. NIST 800-53 controls mapped to each OSI layer. Microsoft Defender + open source tools. Governance reporting for CISO communication. |
+| **DevSecOps CKS** | `OSS-Copilot/` | CKA (completed), CKS (studying) | Secure by pipeline. Kubernetes-native security — admission control, runtime detection, RBAC, Pod Security Standards. Open source tooling for the 5 C's. |
 
 ---
 
 ## What Happens Here
 
-| Phase | What | Why |
-|-------|------|-----|
-| **Break** | Introduce real vulnerabilities — XSS, SQLi, misconfigs, permissive RBAC, missing NetworkPolicy | You can't prove a defense works if you've never tested it against an actual attack |
-| **Attack** | Run offensive tools — DAST, manual exploitation, privilege escalation, container escape attempts | Scanners find patterns. Attacks find gaps. Both matter. |
-| **Remediate** | Fix with GP-Copilot packages — auto-fix scripts, policy-as-code, runtime detection | The remediation is the deliverable. Prove it works, not just that it exists. |
-| **Verify** | Rescan, retest, collect evidence — before/after metrics across all 5 C's | If the scanner still fires or the attack still lands, the fix isn't done. |
+### Break/Fix Training
 
----
+During live sessions, Claude Code breaks something — simulating a bad configuration push or a threat actor introducing a misconfiguration. I pinpoint the issue, map it to the NIST 800-53 control ID, identify which OSI layer it affects, and correct it using the playbooks and tools in this lab.
 
-## The 5 C's — Lab Coverage
+Every scenario follows the same cycle:
 
-Every security domain gets tested end-to-end:
+1. **Control** — understand the NIST 800-53 requirement and WHY it exists
+2. **Break** — introduce the misconfiguration (Claude Code simulates the threat)
+3. **Detect** — confirm the detective tools catch the gap
+4. **Fix** — remediate using the correct tool and configuration
+5. **Validate** — confirm the fix holds under re-test
+6. **Govern** — translate the finding into business risk for CISO reporting (dollar value, ROSI, compliance impact)
 
-| C | Attack Surface | Tools | GP-Copilot Package |
-|---|---------------|-------|--------------------|
-| **Code** | SAST findings, dependency CVEs, hardcoded secrets, unsafe deserialization | Semgrep, Bandit, Gitleaks, Trivy, Grype | `01-APP-SEC` |
-| **Container** | Root containers, unpinned images, missing healthchecks, writable filesystems | Hadolint, Checkov, Trivy image scan | `01-APP-SEC` |
-| **Cluster** | Permissive RBAC, no PSS, missing NetworkPolicy, exposed service accounts | Kubescape, Polaris, Conftest, Kyverno | `02-CLUSTER-HARDEN` |
-| **Cloud** | Open security groups, unencrypted storage, over-permissive IAM, missing logging | Checkov, Prowler, Trivy IaC | `04-CLOUD-SECURITY` |
-| **Compliance** | Control gaps, missing evidence, incomplete SSP, stale POA&M | scan-and-map.py, gap-analysis.py | `05-COMPLIANCE-READY` |
+### What This Proves
 
----
-
-## Architecture
-
-```
-+---------------------------------------------------------+
-|                    ANTHRA PLATFORM                        |
-+---------------------------------------------------------+
-|                                                          |
-|   UI Layer           API Layer          Ingest Layer     |
-|                                                          |
-|   React              FastAPI            Go Service       |
-|   Dashboard    <-->   (Python)     <-->  Log Ingest      |
-|   (Port 8080)        (Port 8080)        (Port 9090)     |
-|                           |                  |           |
-|                           +------+-----------+           |
-|                                  v                       |
-|                            PostgreSQL                    |
-|                            (Port 5432)                   |
-|                                                          |
-|   Security Layer (GP-Copilot)                            |
-|   ----------------------------------                     |
-|   Kyverno (admission) | Falco (runtime) | ArgoCD (GitOps)
-|                                                          |
-+---------------------------------------------------------+
-```
-
-Stack: Python (FastAPI), Go, React, PostgreSQL on EKS
+| Step | What It Demonstrates |
+|------|---------------------|
+| Control first | I think in frameworks, not tools |
+| Break | I understand attack surface and failure modes |
+| Detect | I understand defense in depth |
+| Fix | I close the loop — finding without fixing is useless |
+| Validate | I verify, not assume |
+| Govern | I communicate business risk, not just technical findings |
 
 ---
 
@@ -70,60 +53,188 @@ Stack: Python (FastAPI), Go, React, PostgreSQL on EKS
 
 ```
 Anthra-SecLAB/
-+-- README.md                        # This file
-+-- PRE-DEPLOYMENT-IMPLEMENTATION.md # Implementation guide
-+-- docker-compose.yml               # Local dev stack
 |
-+-- api/                             # Python FastAPI application
-+-- services/                        # Go log-ingest microservice
-+-- ui/                              # React dashboard
-+-- db/                              # Database initialization
-+-- policies/                        # App-level OPA policies
-+-- scripts/                         # App scripts
+|-- target-application/          # The app we attack (FastAPI + React + PostgreSQL)
+|   |-- api/                     # Python FastAPI backend
+|   |-- ui/                      # React frontend
+|   |-- services/                # Go log-ingest microservice
+|   |-- infrastructure/          # Kustomize manifests for k3s deployment
+|   |-- docker-compose.yml       # Local dev stack
 |
-+-- infrastructure/                  # All infrastructure-as-code
-|   +-- anthra-api/                  # base/ + overlays/ + argocd/
-|   +-- anthra-ui/
-|   +-- anthra-log-ingest/
-|   +-- anthra-db/
-|   +-- kustomize/                   # Kustomize base + overlays (local/staging)
-|   +-- terraform/                   # EKS infrastructure
-|   +-- ansible/                     # EC2 provisioning + app deploy
+|-- OSI-MODEL/                   # Security by OSI layer (CySA+ track)
+|   |-- 01-PHYSICAL-LAYER/       # PE controls — physical access, environmental
+|   |-- 02-DATA-LINK-LAYER/      # SC-7, AC-3 — ARP, VLAN, 802.1X
+|   |-- 03-NETWORK-LAYER/        # SC-7, AC-4 — firewalls, segmentation, IDS/IPS
+|   |-- 04-TRANSPORT-LAYER/      # SC-8, IA-5 — TLS, certificates
+|   |-- 05-SESSION-LAYER/        # AC-12, SC-23 — session mgmt, tokens
+|   |-- 06-PRESENTATION-LAYER/   # SC-28, SC-13 — encryption at rest, crypto
+|   |-- 07-APPLICATION-LAYER/    # SI-10, AU-2 — input validation, logging
+|   Each layer contains:
+|     control-map.md             # NIST control -> tool -> enterprise equivalent
+|     scenarios/                 # break/detect/fix/validate/governance per control
+|     playbooks/                 # assess, implement, break-fix, ciso-report
 |
-+-- GP-Copilot/                      # Engagement artifacts + evidence
-    +-- 01-package/                  # APP-SEC
-    +-- 02-package/                  # CLUSTER-HARDEN
-    +-- 03-package/                  # DEPLOY-RUNTIME
-    +-- 05-package/                  # COMPLIANCE-READY
-    +-- 07-package/                  # FEDRAMP-READY (legacy)
+|-- OSS-Copilot/                 # DevSecOps by pipeline (CKS track)
+|   |-- 01-APP-SEC/              # SAST, secrets, deps, Dockerfiles
+|   |-- 02-CLUSTER-HARDEN/       # CIS benchmarks, admission control, RBAC
+|   |-- 03-RUNTIME-SEC/          # Falco, watchers, responders
+|   |-- 04-CLOUD-SEC/            # AWS/Azure controls
+|   |-- 05-COMPLIANCE-AUDIT/     # NIST mapping, evidence packaging
+|
+|-- scenarios/                   # Practice break/fix scenarios
+|   |-- SC-7-boundary-protection/
+|   |-- CM-7-least-functionality/
+|   |-- AC-6-least-privilege/
+|   Each scenario has: break.sh, detect.sh, fix.sh, evidence-template.md
+|
+|-- SecLAB-setup/                # Lab environment setup
+|   |-- 01-cluster-setup/        # k3d config, setup/teardown scripts
+|   |-- 02-soc-stack/            # Falco, Prometheus, Grafana, Kyverno, Fluent Bit
+|   Spins up a k3s cluster with IDS/IPS, admission control, metrics,
+|   and log shipping to Splunk. Open source SOC stack favoring
+|   Microsoft Defender equivalents where applicable.
+|
+|-- evidence/                    # Scanner output from scenario runs (gitignored)
+|-- tools/                       # Evidence collection pipeline, SHA256 manifests
+|-- docs/                        # Control map, POA&M template, specs, plans
 ```
+
+---
+
+## SOC Tool Stack
+
+Deployed via `SecLAB-setup/02-soc-stack/deploy-stack.sh`:
+
+| Tool | SOC Role | What It Replaces | NIST Controls |
+|------|----------|-----------------|---------------|
+| **Falco** | Runtime detection | CrowdStrike Falcon, Sysdig Secure | SI-4, AU-2, IR-4 |
+| **Prometheus + Grafana** | Metrics + dashboards | Datadog, Dynatrace | SI-4, AU-6, CA-7 |
+| **Kyverno** | Admission control | Styra DAS, OPA Enterprise | CM-7, AC-6, CM-2 |
+| **Fluent Bit** | Log shipping | Splunk Universal Forwarder | AU-2, AU-3, AU-4 |
+| **Splunk** | SIEM | Splunk ES, Microsoft Sentinel | AU-6, IR-4, IR-5 |
+
+---
+
+## Access
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Anthra UI | http://localhost:30000 | Target application |
+| Anthra API | http://localhost:30080 | API health check |
+| Splunk | http://localhost:8000 | SIEM — logs, alerts, investigation |
+| Grafana | http://localhost:30030 | Dashboards — metrics, SOC overview |
+
+---
+
+## Reports
+
+Evidence and governance reports land in:
+- `evidence/` — working directory for scanner output (gitignored)
+- `GP-S3/6-seclab-reports/` — finalized reports, CISO briefs, POA&M, AI training data
 
 ---
 
 ## Quick Start
 
 ```bash
-# Start the platform locally
-docker compose up -d
+# 1. Start the lab cluster + target app
+bash SecLAB-setup/01-cluster-setup/setup-cluster.sh
 
-# Access UI
-kubectl port-forward svc/novasec-ui -n anthra 8080:8080 &
-open http://localhost:8080
+# 2. Deploy SOC tool stack
+bash SecLAB-setup/02-soc-stack/deploy-stack.sh
 
-# Run full 5C scan
-PKG=~/linkops-industries/GP-copilot/GP-CONSULTING
-bash $PKG/01-APP-SEC/tools/run-all-scanners.sh --target .
+# 3. Run a break/fix scenario
+bash scenarios/SC-7-boundary-protection/fix.sh    # Establish baseline
+bash scenarios/SC-7-boundary-protection/break.sh   # Break the control
+bash scenarios/SC-7-boundary-protection/detect.sh  # Detect the gap
+bash scenarios/SC-7-boundary-protection/fix.sh     # Remediate
 
-# Run gap analysis
-python3 $PKG/07-FEDRAMP-READY/tools/gap-analysis.py --target . --output /tmp/gap-analysis/
+# 4. Collect evidence
+bash tools/collect-evidence.sh
 ```
 
 ---
 
-## Reports
-
-Scan outputs and evidence: `GP-S3/5-consulting-reports/01-instance/slot-3/`
+*Implement the control. Break it the way an attacker or a misconfigured AI would. Confirm the detection layer catches it. Fix it. Translate the finding into business risk. That's the full loop.*
 
 ---
 
-*Break it. Fix it. Prove it. Ship it.*
+## Labs and Scenarios to Master
+
+The following are the skills this lab is designed to build. Claude Code introduces the misconfigurations. I investigate, identify, fix, and document.
+
+### Control Implementation Across OSI Layers
+
+| OSI Layer | NIST Controls | Tools | What Gets Broken |
+|-----------|--------------|-------|------------------|
+| **L7 Application** | SA-11 developer security testing, RA-5 vulnerability scanning | Semgrep, Bandit, OWASP ZAP, Nuclei | Insecure code patterns, unpatched dependencies, exposed debug endpoints |
+| **L4 Transport** | SC-8 transmission confidentiality | mTLS enforcement, TLS policy validation | Disabled mTLS, expired certificates, plaintext service-to-service traffic |
+| **L3 Network** | SC-7 boundary protection, CM-7 least functionality | NetworkPolicy, VPC segmentation, admission control gates | Deleted NetworkPolicies, over-permissive ingress rules, wildcard port ranges |
+| **L3 Identity** | AC-6 least privilege, AC-2 account management | RBAC scoped service accounts, service account audit | Wildcard ClusterRoleBindings, default service accounts with elevated privileges |
+
+### Break/Fix Methodology
+
+Introduces deliberate misconfigurations in staging — deleted NetworkPolicies, wildcard ClusterRoleBindings, disabled mTLS, missing securityContext, over-permissive ingress rules — then validates that detective controls fire before remediating and rescanning to confirm fixes held.
+
+### Vulnerability Management Lifecycle
+
+1. **Identify** findings via scanner (RA-5)
+2. **Risk-score** by CVSS severity, EPSS exploitation probability, and blast radius
+3. **Prioritize** by asset criticality and exposure
+4. **Remediate** (SI-2)
+5. **Re-scan** to verify (CA-7)
+6. **Document** evidence with SHA256 manifest
+7. **Log** to POA&M
+
+### Detective Control Validation
+
+Falco eBPF rules verified against deliberate attack scenarios — privilege escalation attempts, lateral movement simulation, kube-hunter probes, unauthorized API calls — confirming rules fire before findings are closed.
+
+### NIST 800-53 Evidence Chain
+
+Every control traces: finding → fix → re-scan → evidence file. Control families covered:
+
+| Family | Name |
+|--------|------|
+| AC | Access Control |
+| AU | Audit and Accountability |
+| CA | Assessment, Authorization, and Monitoring |
+| CM | Configuration Management |
+| IA | Identification and Authentication |
+| IR | Incident Response |
+| RA | Risk Assessment |
+| SA | System and Services Acquisition |
+| SC | System and Communications Protection |
+| SI | System and Information Integrity |
+
+### SIEM Integration
+
+Falco alerts forwarded via Fluent Bit to Microsoft Sentinel — KQL correlation rules written to detect cross-layer attack patterns, reducing alert noise and surfacing true positives for analyst review.
+
+### CISO Reporting
+
+Technical findings translated to business risk language — lateral movement exposure, compliance gap, blast radius assessment, remediation timeline, and business impact — structured as executive risk summaries per scan cycle.
+
+### Playbook-Driven
+
+Each OSI layer scenario documented as a step-by-step runbook covering break procedure, expected detection, fix commands, and evidence collection — repeatable by any analyst on the team.
+
+---
+
+## Why This Lab Exists
+
+This is the lab behind the resume line. Every bullet on the resume traces back to a scenario that ran here, against this target application, with this tool stack.
+
+```
+Resume bullet                          →  Lab proof
+─────────────────────────────────────────────────────────────────────
+OSI-layered control implementation     →  OSI-MODEL/ scenarios per layer
+Vulnerability management lifecycle     →  evidence/ scan outputs + POA&M
+Break/fix validation methodology       →  scenarios/ break.sh → detect.sh → fix.sh
+NIST 800-53 evidence chain             →  tools/collect-evidence.sh + SHA256 manifests
+SIEM operations                        →  SecLAB-setup/02-soc-stack/ Falco → Fluent Bit → Sentinel
+Executive reporting                    →  GP-S3/6-seclab-reports/ CISO briefs
+Documented playbooks                   →  OSI-MODEL/*/playbooks/ per layer
+```
+
+Nothing on the resume is theoretical. If an interviewer asks "show me," the answer is `git log`, the evidence directory, and a live demo on this cluster.
