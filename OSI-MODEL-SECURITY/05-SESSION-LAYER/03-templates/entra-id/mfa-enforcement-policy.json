@@ -1,0 +1,76 @@
+{
+  "_comment": "Entra ID MFA Enforcement Conditional Access Policy Template",
+  "_nist": "IA-2 (Identification and Authentication), IA-2.1 (MFA for privileged), IA-2.2 (MFA for non-privileged)",
+  "_usage": "Replace BREAK_GLASS_GROUP_ID before applying. Apply via Microsoft Graph API.",
+
+  "displayName": "REQUIRE: MFA for All Users — All Apps",
+
+  "_state_comment": "Start in report-only mode. Monitor 1-2 weeks. Move to enabled.",
+  "state": "enabledForReportingButNotEnforced",
+
+  "conditions": {
+    "users": {
+      "_comment": "Include all users. Exclude break-glass group to prevent self-lockout.",
+      "_nist": "AC-2 — account management requires break-glass accounts for emergency access",
+      "includeUsers": ["All"],
+      "excludeUsers": [],
+      "excludeGroups": ["BREAK_GLASS_GROUP_ID"]
+    },
+
+    "applications": {
+      "_comment": "All cloud apps. Scope to specific apps if you need gradual rollout.",
+      "includeApplications": ["All"],
+      "excludeApplications": []
+    },
+
+    "platforms": {
+      "_comment": "All platforms — Windows, macOS, iOS, Android, Linux. MFA is platform-agnostic.",
+      "includePlatforms": ["all"]
+    },
+
+    "clientAppTypes": [
+      "_comment: Modern auth clients only. Legacy auth (exchangeActiveSync, other) is blocked by separate policy.",
+      "browser",
+      "mobileAppsAndDesktopClients"
+    ],
+
+    "locations": {
+      "_comment": "All locations — no location exclusion. MFA required everywhere including trusted networks.",
+      "_rationale": "Insider threats and VPN-compromised devices exist on trusted networks. MFA everywhere eliminates location as a trust boundary.",
+      "includeLocations": ["All"]
+    }
+  },
+
+  "grantControls": {
+    "_comment": "Require MFA. No alternative controls — not compliant device, not password change.",
+    "_nist": "IA-2.1 and IA-2.2 — multi-factor authentication required for all access",
+    "operator": "OR",
+    "builtInControls": ["mfa"]
+  },
+
+  "sessionControls": {
+    "_comment": "Enforce sign-in frequency and disable persistent browser sessions",
+    "_nist": "AC-12 — session termination after defined inactivity or time period",
+
+    "signInFrequency": {
+      "_comment": "Require re-authentication every 8 hours. Balance security with usability.",
+      "_rationale": "Sessions that persist indefinitely allow attackers to ride hijacked sessions long after the initial compromise. 8 hours = standard workday.",
+      "value": 8,
+      "type": "hours",
+      "isEnabled": true
+    },
+
+    "persistentBrowser": {
+      "_comment": "Never allow persistent browser sessions. Prevents session tokens persisting across browser restarts.",
+      "_rationale": "Persistent sessions on shared or lost devices allow unauthorized access after the user has left the device.",
+      "mode": "never",
+      "isEnabled": true
+    }
+  },
+
+  "_apply_commands": {
+    "create": "az rest --method POST --url 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies' --headers 'Content-Type=application/json' --body @mfa-enforcement-policy.json",
+    "enable": "az rest --method PATCH --url 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies/<policy-id>' --headers 'Content-Type=application/json' --body '{\"state\": \"enabled\"}'",
+    "verify": "az rest --method GET --url 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies' | python3 -c \"import json,sys; [print(p['displayName'], p['state']) for p in json.load(sys.stdin)['value'] if 'mfa' in str(p.get('grantControls',{}))]\""
+  }
+}

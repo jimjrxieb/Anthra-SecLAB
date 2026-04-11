@@ -1,0 +1,402 @@
+# Suricata Custom Rules — Local Site-Specific Detections
+# NIST Controls: SI-3, SI-4, AC-7
+# SID Range: 1000000–1099999 (reserved for local/custom rules per Suricata convention)
+# Format: action proto src dst (msg, content, classtype, sid, rev, metadata)
+# Metadata fields: nist, mitre_technique, deployment, created_date
+#
+# Deployment: Copy to /etc/suricata/rules/local.rules
+# Test syntax:  sudo suricata -T -c /etc/suricata/suricata.yaml
+# Reload:       sudo kill -USR2 $(pgrep suricata)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 1: Authentication Attacks
+# MITRE: T1110 (Brute Force), T1110.001 (Password Guessing)
+# NIST:  AC-7 (Unsuccessful Login Attempts), SI-4 (System Monitoring)
+# ════════════════════════════════════════════════════════════════════════════
+
+# SSH Brute Force — 5 new connections from same source in 60 seconds
+alert tcp $EXTERNAL_NET any -> $HOME_NET 22 (
+    msg:"ANTHRA-LOCAL SSH Brute Force - 5+ attempts in 60s";
+    flow:to_server;
+    flags:S,12;
+    threshold:type both,track by_src,count 5,seconds 60;
+    classtype:attempted-admin;
+    sid:1000001;
+    rev:1;
+    metadata:
+        nist AC-7,
+        nist SI-4,
+        mitre_technique T1110.001,
+        deployment perimeter-ingress,
+        created_date 2026-04-10;
+)
+
+# RDP Brute Force — 5 attempts in 30 seconds
+alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (
+    msg:"ANTHRA-LOCAL RDP Brute Force - 5+ attempts in 30s";
+    flow:to_server;
+    flags:S,12;
+    threshold:type both,track by_src,count 5,seconds 30;
+    classtype:attempted-admin;
+    sid:1000002;
+    rev:1;
+    metadata:
+        nist AC-7,
+        nist SI-4,
+        mitre_technique T1110.001,
+        deployment perimeter-ingress,
+        created_date 2026-04-10;
+)
+
+# HTTP Basic Auth cleartext submission
+alert http $HOME_NET any -> $EXTERNAL_NET $HTTP_PORTS (
+    msg:"ANTHRA-LOCAL Cleartext HTTP POST with password field";
+    flow:established,to_server;
+    http_method;
+    content:"POST";
+    http_client_body;
+    content:"password=";
+    nocase;
+    classtype:credential-theft;
+    sid:1000003;
+    rev:1;
+    metadata:
+        nist SI-4,
+        nist IA-5,
+        mitre_technique T1552.001,
+        deployment egress-monitoring,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 2: DNS Evasion — DNS over HTTPS (DoH) Detection
+# MITRE: T1071.004 (Application Layer Protocol: DNS)
+# NIST:  SI-4 (System Monitoring), SC-7 (Boundary Protection)
+# WHY: DoH bypasses corporate DNS resolvers, defeating DNS-based content
+#      filtering and DNS query logging used for threat detection.
+# ════════════════════════════════════════════════════════════════════════════
+
+# DoH to Google (8.8.8.8)
+alert tls $HOME_NET any -> 8.8.8.8 443 (
+    msg:"ANTHRA-LOCAL DNS over HTTPS to Google (DoH bypass)";
+    flow:established,to_server;
+    tls_sni;
+    content:"dns.google";
+    nocase;
+    classtype:policy-violation;
+    sid:1000010;
+    rev:1;
+    metadata:
+        nist SI-4,
+        nist SC-7,
+        mitre_technique T1071.004,
+        deployment internal-egress,
+        created_date 2026-04-10;
+)
+
+# DoH to Cloudflare (1.1.1.1)
+alert tls $HOME_NET any -> 1.1.1.1 443 (
+    msg:"ANTHRA-LOCAL DNS over HTTPS to Cloudflare (DoH bypass)";
+    flow:established,to_server;
+    tls_sni;
+    content:"cloudflare-dns.com";
+    nocase;
+    classtype:policy-violation;
+    sid:1000011;
+    rev:1;
+    metadata:
+        nist SI-4,
+        nist SC-7,
+        mitre_technique T1071.004,
+        deployment internal-egress,
+        created_date 2026-04-10;
+)
+
+# DNS query to port other than 53 (potential DNS tunneling)
+alert udp $HOME_NET any -> any !53 (
+    msg:"ANTHRA-LOCAL DNS-like traffic on non-standard port (potential tunneling)";
+    byte_test:1,!&,0xF8,2;
+    threshold:type limit,track by_src,count 1,seconds 60;
+    classtype:bad-unknown;
+    sid:1000012;
+    rev:1;
+    metadata:
+        nist SI-4,
+        mitre_technique T1071.004,
+        deployment internal,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 3: Suspicious DNS — High-Risk TLDs and Long Query Strings
+# MITRE: T1568 (Dynamic Resolution), T1071.004 (DNS C2)
+# NIST:  SI-4 (System Monitoring)
+# WHY: High-abuse TLDs (.top, .xyz, .click) are documented in threat intel
+#      as preferred C2 infrastructure. Long DNS queries may be DNS tunneling.
+# ════════════════════════════════════════════════════════════════════════════
+
+# DNS query to high-risk TLDs
+alert dns any any -> any any (
+    msg:"ANTHRA-LOCAL DNS Query to High-Risk TLD (.top .xyz .click .tk)";
+    dns_query;
+    pcre:"/\.(top|xyz|click|tk|pw|cc|su|gq|ml|cf|ga)$/i";
+    threshold:type limit,track by_src,count 1,seconds 300;
+    classtype:bad-unknown;
+    sid:1000020;
+    rev:1;
+    metadata:
+        nist SI-4,
+        mitre_technique T1568,
+        deployment dns-monitoring,
+        created_date 2026-04-10;
+)
+
+# Long DNS query (>50 characters in hostname) — potential DNS tunneling
+alert dns any any -> any any (
+    msg:"ANTHRA-LOCAL Abnormally Long DNS Query - possible DNS tunneling";
+    dns_query;
+    pcre:"/^[a-z0-9\-]{50,}\./i";
+    threshold:type limit,track by_src,count 3,seconds 60;
+    classtype:bad-unknown;
+    sid:1000021;
+    rev:1;
+    metadata:
+        nist SI-4,
+        mitre_technique T1071.004,
+        deployment dns-monitoring,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 4: Lateral Movement
+# MITRE: T1021.002 (SMB/Windows Admin Shares), T1550.002 (Pass the Hash)
+# NIST:  SC-7 (Boundary Protection), SI-4 (Monitoring)
+# WHY: Lateral movement over SMB is the most common post-exploitation path
+#      in Windows environments. Rapid connections = automated propagation.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Rapid SMB connections from single source (potential lateral movement sweep)
+alert tcp $HOME_NET any -> $HOME_NET 445 (
+    msg:"ANTHRA-LOCAL Rapid SMB Connections - potential lateral movement";
+    flow:to_server;
+    flags:S,12;
+    threshold:type both,track by_src,count 10,seconds 60;
+    classtype:attempted-admin;
+    sid:1000030;
+    rev:1;
+    metadata:
+        nist SC-7,
+        nist SI-4,
+        mitre_technique T1021.002,
+        deployment internal-east-west,
+        created_date 2026-04-10;
+)
+
+# SMBv1 detection (EternalBlue, WannaCry, NotPetya all require SMBv1)
+alert tcp $HOME_NET any -> $HOME_NET 445 (
+    msg:"ANTHRA-LOCAL SMBv1 Protocol Detected - legacy vulnerability exposure";
+    flow:established,to_server;
+    content:"|ff|SMB";
+    depth:8;
+    offset:4;
+    classtype:policy-violation;
+    sid:1000031;
+    rev:1;
+    metadata:
+        nist SC-7,
+        nist SI-3,
+        mitre_technique T1210,
+        deployment internal,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 5: Database Exposure
+# MITRE: T1190 (Exploit Public-Facing Application), T1046 (Network Service Scan)
+# NIST:  SC-7 (Boundary Protection), AC-4 (Information Flow)
+# WHY: Database ports should NEVER be accessible from external networks.
+#      Any external connection to DB ports is immediate FAIL for SC-7.
+# ════════════════════════════════════════════════════════════════════════════
+
+# External access to MySQL
+alert tcp $EXTERNAL_NET any -> $SQL_SERVERS 3306 (
+    msg:"ANTHRA-LOCAL External Access to MySQL Port 3306 - SC-7 VIOLATION";
+    flow:to_server;
+    flags:S,12;
+    classtype:attempted-recon;
+    sid:1000040;
+    rev:1;
+    metadata:
+        nist SC-7,
+        nist AC-4,
+        mitre_technique T1190,
+        deployment perimeter,
+        created_date 2026-04-10;
+)
+
+# External access to PostgreSQL
+alert tcp $EXTERNAL_NET any -> $SQL_SERVERS 5432 (
+    msg:"ANTHRA-LOCAL External Access to PostgreSQL Port 5432 - SC-7 VIOLATION";
+    flow:to_server;
+    flags:S,12;
+    classtype:attempted-recon;
+    sid:1000041;
+    rev:1;
+    metadata:
+        nist SC-7,
+        nist AC-4,
+        mitre_technique T1190,
+        deployment perimeter,
+        created_date 2026-04-10;
+)
+
+# External access to Redis (no auth by default in older versions)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 6379 (
+    msg:"ANTHRA-LOCAL External Access to Redis Port 6379 - unauthenticated risk";
+    flow:to_server;
+    flags:S,12;
+    classtype:attempted-recon;
+    sid:1000042;
+    rev:1;
+    metadata:
+        nist SC-7,
+        nist AC-4,
+        mitre_technique T1190,
+        deployment perimeter,
+        created_date 2026-04-10;
+)
+
+# External access to MongoDB
+alert tcp $EXTERNAL_NET any -> $HOME_NET 27017 (
+    msg:"ANTHRA-LOCAL External Access to MongoDB Port 27017";
+    flow:to_server;
+    flags:S,12;
+    classtype:attempted-recon;
+    sid:1000043;
+    rev:1;
+    metadata:
+        nist SC-7,
+        mitre_technique T1190,
+        deployment perimeter,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 6: Cleartext Protocols
+# MITRE: T1040 (Network Sniffing), T1552 (Unsecured Credentials)
+# NIST:  SC-8 (Transmission Confidentiality and Integrity), SI-4
+# WHY: FTP, Telnet, and HTTP basic auth transmit credentials in plaintext.
+#      Any use on a network with an adversary = credential theft.
+# ════════════════════════════════════════════════════════════════════════════
+
+# FTP login attempt (cleartext credential transmission)
+alert tcp any any -> $HOME_NET 21 (
+    msg:"ANTHRA-LOCAL FTP Login Attempt - cleartext credentials";
+    flow:established,to_server;
+    content:"USER ";
+    nocase;
+    classtype:policy-violation;
+    sid:1000050;
+    rev:1;
+    metadata:
+        nist SC-8,
+        nist SI-4,
+        mitre_technique T1040,
+        deployment all,
+        created_date 2026-04-10;
+)
+
+# Telnet connection
+alert tcp any any -> $HOME_NET 23 (
+    msg:"ANTHRA-LOCAL Telnet Connection - cleartext protocol";
+    flow:to_server;
+    flags:S,12;
+    threshold:type limit,track by_src,count 1,seconds 300;
+    classtype:policy-violation;
+    sid:1000051;
+    rev:1;
+    metadata:
+        nist SC-8,
+        nist SI-4,
+        mitre_technique T1040,
+        deployment all,
+        created_date 2026-04-10;
+)
+
+# HTTP Basic Authorization header (cleartext credential over HTTP)
+alert http $HOME_NET any -> any $HTTP_PORTS (
+    msg:"ANTHRA-LOCAL HTTP Basic Auth header transmitted in cleartext";
+    flow:established,to_server;
+    http_header;
+    content:"Authorization: Basic";
+    nocase;
+    classtype:credential-theft;
+    sid:1000052;
+    rev:1;
+    metadata:
+        nist SC-8,
+        nist IA-5,
+        mitre_technique T1552.001,
+        deployment egress,
+        created_date 2026-04-10;
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 7: C2 Indicators (Commented — Enable After Tuning)
+# MITRE: T1071 (Application Layer Protocol), T1573 (Encrypted Channel)
+# NIST:  SI-4 (System Monitoring), SI-3 (Malicious Code Protection)
+# WHY: These rules generate high false positives without environment tuning.
+#      Enable after establishing a traffic baseline and adjusting content.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Suspicious User-Agent: empty User-Agent (malware often sends no UA)
+#alert http $HOME_NET any -> $EXTERNAL_NET $HTTP_PORTS (
+#    msg:"ANTHRA-LOCAL HTTP Request with Empty User-Agent";
+#    flow:established,to_server;
+#    http_header;
+#    content:"User-Agent: |0d 0a|";
+#    nocase;
+#    classtype:bad-unknown;
+#    sid:1000060;
+#    rev:1;
+#    metadata:
+#        nist SI-4,
+#        mitre_technique T1071.001,
+#        deployment egress,
+#        created_date 2026-04-10;
+#)
+
+# Periodic beacon — same-size HTTP GET at regular intervals
+# (requires flow statistics — enable if using Zeek/flow analysis alongside Suricata)
+#alert http $HOME_NET any -> $EXTERNAL_NET $HTTP_PORTS (
+#    msg:"ANTHRA-LOCAL Potential C2 Beacon - repetitive GET requests";
+#    flow:established,to_server;
+#    http_method;
+#    content:"GET";
+#    threshold:type both,track by_src,count 20,seconds 600;
+#    classtype:command-and-control;
+#    sid:1000061;
+#    rev:1;
+#    metadata:
+#        nist SI-4,
+#        mitre_technique T1071.001,
+#        deployment egress,
+#        created_date 2026-04-10;
+#)
+
+# PowerShell download cradle via User-Agent
+#alert http $HOME_NET any -> $EXTERNAL_NET $HTTP_PORTS (
+#    msg:"ANTHRA-LOCAL PowerShell Download Cradle - possible stage-2 payload";
+#    flow:established,to_server;
+#    http_user_agent;
+#    content:"WindowsPowerShell";
+#    nocase;
+#    classtype:bad-unknown;
+#    sid:1000062;
+#    rev:1;
+#    metadata:
+#        nist SI-3,
+#        mitre_technique T1059.001,
+#        deployment egress,
+#        created_date 2026-04-10;
+#)

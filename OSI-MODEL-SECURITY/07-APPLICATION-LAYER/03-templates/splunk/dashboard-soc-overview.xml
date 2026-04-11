@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dashboard-soc-overview.xml — Splunk Simple XML SOC Dashboard
+  NIST: AU-6 (audit review and analysis), SI-4 (information system monitoring)
+  Deploy to: $SPLUNK_HOME/etc/apps/search/local/data/ui/views/soc_overview.xml
+  Access at: http://splunk:8000/en-US/app/search/soc_overview
+-->
+<dashboard version="1.1" theme="dark">
+  <label>SOC Overview</label>
+  <description>Security Operations Center — Alert volume, top sources, critical alerts. NIST AU-6/SI-4.</description>
+
+  <!-- Time picker applies to all panels -->
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="field_time">
+      <label>Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="index_token">
+      <label>Index</label>
+      <default>*</default>
+      <choice value="*">All Indexes</choice>
+      <choice value="main">main</choice>
+      <choice value="security">security</choice>
+      <choice value="wineventlog">wineventlog</choice>
+      <choice value="k8s">k8s</choice>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <title>Total Alerts (Period)</title>
+      <single>
+        <search>
+          <query>index=$index_token$ | stats count as TotalAlerts</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="colorBy">value</option>
+        <option name="underLabel">Events Indexed</option>
+      </single>
+    </panel>
+    <panel>
+      <title>High Severity Wazuh Alerts</title>
+      <single>
+        <search>
+          <query>index=security sourcetype=wazuh rule.level>=12 | stats count</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD41F1F"]</option>
+        <option name="ranges">[0,5,20]</option>
+        <option name="underLabel">Wazuh Critical (Level 12+)</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Failed Logins (Windows)</title>
+      <single>
+        <search>
+          <query>index=wineventlog EventCode=4625 | stats count</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="underLabel">EventCode 4625</option>
+      </single>
+    </panel>
+    <panel>
+      <title>K8s Exec Events (Production)</title>
+      <single>
+        <search>
+          <query>index=k8s sourcetype=kube:apiserver:audit verb=create requestURI="*/pods/*/exec" | stats count</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD41F1F"]</option>
+        <option name="ranges">[0,1,5]</option>
+        <option name="underLabel">kubectl exec (any namespace)</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Alert Volume Over Time</title>
+      <chart>
+        <search>
+          <query>index=$index_token$ | timechart span=1h count as AlertCount</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Alert Count</option>
+        <option name="charting.chart.nullValueMode">gaps</option>
+        <option name="charting.seriesColors">["#6ABFB8"]</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Top 10 Alert Sources (by sourcetype)</title>
+      <chart>
+        <search>
+          <query>index=$index_token$ | top limit=10 sourcetype showperc=false</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.axisTitleX.text">Count</option>
+        <option name="charting.axisTitleY.text">Source Type</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Critical Alerts — Review Required</title>
+      <table>
+        <search>
+          <query>index=security (sourcetype=wazuh rule.level>=12) OR (index=wineventlog (EventCode=4625 OR EventCode=4672 OR EventCode=4698)) | eval SourceType=sourcetype, AlertDetail=coalesce(rule.description, EventCode) | table _time, host, SourceType, AlertDetail, src_ip | sort -_time | head 50</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="wrap">true</option>
+        <format type="color" field="SourceType">
+          <colorPalette type="sharedList"></colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Failed Login Sources (Top 20 IPs)</title>
+      <table>
+        <search>
+          <query>index=wineventlog EventCode=4625 | stats count as FailedAttempts, values(Account_Name) as TargetAccounts by Source_Network_Address | sort -FailedAttempts | head 20 | eval Risk=case(FailedAttempts>20,"CRITICAL",FailedAttempts>10,"HIGH",FailedAttempts>5,"MEDIUM",true(),"LOW")</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <format type="color" field="Risk">
+          <colorPalette type="map">{"CRITICAL": "#D41F1F", "HIGH": "#F7BC38", "MEDIUM": "#FFA500", "LOW": "#65A637"}</colorPalette>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <title>FIM Changes (Last Period)</title>
+      <table>
+        <search>
+          <query>index=security sourcetype=wazuh "syscheck.event" | spath output=FIMPath path="syscheck.path" | spath output=FIMEvent path="syscheck.event" | spath output=AgentName path="agent.name" | table _time, AgentName, FIMPath, FIMEvent | sort -_time | head 25</query>
+          <earliest>$field_time.earliest$</earliest>
+          <latest>$field_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>

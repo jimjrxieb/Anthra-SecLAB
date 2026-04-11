@@ -1,55 +1,149 @@
-# Layer 2 Data Link — Assess Current State
+# Layer 2 Data Link — Assessment
 
-## Purpose
+| Field | Value |
+|-------|-------|
+| NIST Controls | SC-7, AC-3, AC-4, SI-4, IA-2 |
+| Tools | arpwatch, ip neigh, bridge, tshark |
+| Time Estimate | 1 hour |
+| Rank | D |
 
-Document the current data link layer security posture before implementing any controls. This assessment establishes the baseline for measuring improvement. Layer 2 is where network segmentation lives — if these controls are missing, every network security control above them is built on sand.
+---
+
+## Objective
+
+Establish the Layer 2 security baseline. Run all auditors, identify gaps, and rank findings by implementation priority before any fix work begins. You do not harden what you have not mapped.
+
+---
+
+## Run All Auditors
+
+```bash
+# Run all L2 auditors in sequence
+sudo ./tools/run-all-audits.sh eth0
+
+# OR run individually for targeted review:
+sudo ./01-auditors/audit-arp-integrity.sh eth0
+sudo ./01-auditors/audit-vlan-config.sh
+sudo ./01-auditors/audit-802.1x-status.sh eth0
+```
+
+Evidence automatically saved to `/tmp/jsa-evidence/` with timestamps.
+
+---
 
 ## Assessment Checklist
 
-### SC-7 ARP Protection
+Work through each control area. Mark each item with: PASS / WARN / FAIL / N/A
 
-- [ ] Is Dynamic ARP Inspection (DAI) enabled? On which VLANs?
-- [ ] Is DHCP snooping enabled? (Required for DAI to function)
-- [ ] Are DHCP snooping trusted ports correctly configured? (Uplinks, DHCP servers only)
-- [ ] Are static ARP entries configured for critical systems? (Gateways, DNS, DCs)
-- [ ] Is ARP rate limiting configured on access ports?
-- [ ] Is arpwatch or equivalent ARP monitoring deployed?
-- [ ] When was the last test for ARP spoofing susceptibility?
+### ARP Table Integrity (SC-7, SI-4)
 
-### AC-3 VLAN Segmentation and Access Enforcement
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 1 | No duplicate MAC addresses in ARP table | No duplicates | |
+| 2 | No FAILED or INCOMPLETE ARP entries | None, or explainable | |
+| 3 | ARP table entries match known host inventory | All IPs mapped to known MACs | |
+| 4 | Gratuitous ARP testing tool available (arping) | arping installed | |
 
-- [ ] What VLANs exist? Map them (ID, name, purpose, subnet)
-- [ ] Are all access ports explicitly set to `switchport mode access`?
-- [ ] Is DTP disabled on all access ports? (`switchport nonegotiate`)
-- [ ] What is the native VLAN on trunk ports? (Should NOT be VLAN 1)
-- [ ] Is native VLAN tagging enabled? (`vlan dot1q tag native`)
-- [ ] Are unused VLANs pruned from trunk ports?
-- [ ] Are unused switch ports shut down and assigned to a black-hole VLAN?
-- [ ] Is port security enabled on access ports? What are the MAC limits?
-- [ ] Is 802.1X deployed? On which ports? What authentication method?
+### arpwatch Service Status (SI-4)
 
-### SI-4 Layer 2 Monitoring
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 5 | arpwatch service is running | systemctl: active | |
+| 6 | arpwatch monitoring correct interface | Process bound to eth0 | |
+| 7 | arpwatch database exists and has entries | arp.dat with MAC-IP pairs | |
+| 8 | arpwatch logs forwarding to syslog | /var/log/arpwatch.log populated | |
+| 9 | arpwatch events forwarding to SIEM | rsyslog forward configured | |
 
-- [ ] Is there any L2-specific monitoring in place? (arpwatch, NDR, SPAN)
-- [ ] Are switch logs forwarded to a SIEM?
-- [ ] Are MAC address table changes monitored?
-- [ ] Are trunk port state changes alerted on?
-- [ ] Is there a SPAN/mirror port configured for network analysis?
-- [ ] Are 802.1Q anomalies (double-tagged frames) detectable?
+### VLAN Configuration (SC-7, AC-4)
 
-### Switch Configuration Baseline
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 10 | 802.1q kernel module loaded | lsmod shows 8021q | |
+| 11 | VLAN interfaces exist (if VLAN network) | ip -d link shows VLAN subinterfaces | |
+| 12 | Bridge VLAN filtering enabled | /sys/class/net/br*/bridge/vlan_filtering = 1 | |
+| 13 | Native VLAN is not VLAN 1 | PVID on trunk ports != 1 | |
+| 14 | DTP (dynamic trunk negotiation) disabled | No negotiation frames from access ports | |
 
-- [ ] Export running configuration from all managed switches
-- [ ] Document firmware versions — are they current?
-- [ ] Are management interfaces on a dedicated management VLAN?
-- [ ] Is SSH enabled and Telnet disabled for switch management?
-- [ ] Are SNMP community strings changed from defaults?
-- [ ] Are switch management ACLs configured?
+### 802.1X Enforcement (IA-2, AC-3)
 
-## Output
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 15 | wpa_supplicant running (Linux) OR dot3svc running (Windows) | Service active | |
+| 16 | EAP authentication state: AUTHENTICATED | wpa_cli status shows AUTHENTICATED | |
+| 17 | wpa_supplicant config has EAP method defined | /etc/wpa_supplicant/*.conf contains eap= | |
+| 18 | NetworkManager has 802.1X profile (if NM in use) | nmcli connection has 802-1x config | |
 
-Complete the checklist above and produce:
-1. VLAN inventory spreadsheet (ID, name, purpose, subnet, ports)
-2. Switch configuration audit (DTP status, native VLAN, port security per port)
-3. Gap analysis: which SC-7, AC-3, and SI-4 controls have findings?
-4. Risk ranking of findings using 5x5 matrix
+### Trunk Port Security (SC-7, AC-4)
+
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 19 | Trunk ports restrict allowed VLANs | Only required VLANs permitted | |
+| 20 | Unused ports disabled | No active ports without connected devices | |
+| 21 | MAC address table overflow protection | Port security or rate limiting configured | |
+
+### MAC Address Table Overflow Protection (SI-4)
+
+| # | Check | Expected | Status |
+|---|-------|----------|--------|
+| 22 | Port security configured (switch) OR ebtables/nftables (Linux) | MAC limit enforced per port | |
+| 23 | Storm control enabled on access ports | Broadcast/multicast storm threshold set | |
+
+---
+
+## Finding Classification
+
+Use the NIST finding framework to classify each FAIL item:
+
+| Severity | Criteria | Example |
+|----------|----------|---------|
+| Critical | Exploitable now, direct impact | Duplicate MACs in ARP table (active spoofing) |
+| High | Control absent, exploitable with low effort | arpwatch not running (no ARP visibility) |
+| Medium | Control present but misconfigured | Native VLAN is VLAN 1 (hopping risk exists) |
+| Low | Best practice gap, low exploitation likelihood | arping not installed (limits testing capability) |
+
+---
+
+## Implementation Priority Ranking
+
+After completing the checklist, prioritize remediation in this order:
+
+**Priority 1 — Fix Today (Critical/High)**
+- Active duplicate MACs (live spoofing in progress) — investigate immediately
+- arpwatch not running — deploy via `02-fixers/fix-arp-monitoring.sh`
+- 802.1X absent on segments with untrusted endpoints — escalate to network team
+
+**Priority 2 — Fix This Week (High/Medium)**
+- No SIEM forwarding for arpwatch events — add rsyslog rule
+- Native VLAN is VLAN 1 — change on all trunk ports
+- Bridge VLAN filtering disabled — enable on all Linux bridges
+
+**Priority 3 — Fix Next Sprint (Medium/Low)**
+- DTP not disabled on access ports — add `switchport nonegotiate`
+- Port security not configured — implement MAC limits
+- 802.1X not configured but network is trusted — document exception
+
+---
+
+## Assessment Evidence
+
+Save all evidence to the engagement directory:
+
+```bash
+# Create evidence directory
+mkdir -p evidence/$(date +%Y%m%d)-l2-assessment/
+
+# Collect
+ip neigh show > evidence/$(date +%Y%m%d)-l2-assessment/arp-table.txt
+ip -d link show > evidence/$(date +%Y%m%d)-l2-assessment/interfaces.txt
+systemctl status arpwatch --no-pager > evidence/$(date +%Y%m%d)-l2-assessment/arpwatch-status.txt
+lsmod | grep 8021q > evidence/$(date +%Y%m%d)-l2-assessment/8021q-module.txt
+```
+
+---
+
+## Next Step
+
+- FAIL on ARP integrity: `01a-arp-spoofing-audit.md` (deep dive)
+- FAIL on arpwatch: `02-fix-SC7-arp-protection.md`
+- FAIL on VLAN: `02a-fix-AC3-vlan-segmentation.md`
+- All PASS/WARN: `03-validate.md` to document baseline

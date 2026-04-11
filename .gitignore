@@ -17,3 +17,4 @@ Thumbs.db
 
 # Evidence (generated, not committed)
 evidence-*/
+target-application/

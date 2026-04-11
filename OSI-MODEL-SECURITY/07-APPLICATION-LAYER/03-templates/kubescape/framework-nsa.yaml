@@ -1,0 +1,96 @@
+# kubescape NSA/CISA Framework Scan Configuration
+# NIST: CM-6 (configuration settings), RA-5 (vulnerability scanning)
+# Reference: NSA/CISA Kubernetes Hardening Guidance (Aug 2022)
+# WHY: kubescape checks K8s clusters against the NSA hardening guide —
+# this is the government-recommended baseline, not just CIS benchmarks.
+# Overlaps with CIS but adds workload-specific checks.
+---
+apiVersion: v1
+kind: Config
+metadata:
+  name: jsa-kubescape-nsa
+  namespace: default
+  labels:
+    nist-control: CM-6
+    audit-type: kubescape-nsa
+
+# Scan configuration
+scan:
+  # WHY: NSA framework covers pod hardening, network policies, RBAC, audit logging
+  # — the same areas NIST 800-53 CM-6 and CM-7 require
+  framework: NSA
+
+  # Include all namespaces except system ones for workload checks
+  # WHY: System namespaces have legitimate privileged containers — don't fail them
+  excludeNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+
+  # Output formats for different consumers
+  format: json           # Machine-parseable for SIEM ingest
+  outputFile: /tmp/kubescape-nsa-results.json
+
+  # Severity threshold — fail on High or Critical only
+  # WHY: Don't block on Medium during initial assessment — establish baseline first
+  failThreshold: 0.85    # Fail if compliance score below 85%
+
+# Controls that map to NIST/CySA+ objectives
+# Each NSA control maps to specific NIST 800-53 controls:
+nistMapping:
+  # Pod Security
+  C-0002:  # "containers running as root"
+    nist: "CM-6 (configuration settings)"
+    why: "Root containers are the default — attackers rely on this misconfiguration"
+  C-0009:  # "resource policies present"
+    nist: "CM-7 (least functionality)"
+    why: "Resource limits prevent noisy-neighbor and resource exhaustion attacks"
+  C-0013:  # "non-root containers"
+    nist: "CM-6, AC-6 (least privilege)"
+    why: "Non-root is the single most impactful container hardening step"
+  C-0016:  # "allow privilege escalation"
+    nist: "CM-6, AC-6"
+    why: "allowPrivilegeEscalation=true lets container processes gain root"
+  C-0017:  # "immutable container filesystem"
+    nist: "SI-7 (integrity)"
+    why: "Read-only filesystem prevents attacker from writing tools or persistence"
+  C-0021:  # "hostPID, hostIPC, hostNetwork"
+    nist: "SC-3 (security function isolation)"
+    why: "Host namespace sharing breaks container isolation — gives attacker host access"
+  C-0044:  # "container seccomp profile"
+    nist: "CM-7 (least functionality)"
+    why: "Seccomp restricts syscalls — reduces attack surface significantly"
+  C-0055:  # "Linux hardening"
+    nist: "CM-6"
+    why: "AppArmor/seccomp/SELinux provide defense-in-depth beyond RBAC"
+
+  # Network
+  C-0035:  # "deny all network policy"
+    nist: "SC-7 (boundary protection), AC-17 (remote access)"
+    why: "Default deny networkpolicy is the K8s zero-trust baseline"
+
+  # RBAC
+  C-0036:  # "cluster-admin binding"
+    nist: "AC-6 (least privilege)"
+    why: "cluster-admin grants full control of the cluster — should be near-empty"
+  C-0040:  # "secrets in environment variables"
+    nist: "IA-5 (authenticator management)"
+    why: "Env vars are visible in pod specs and process lists — use mounted secrets"
+
+  # Workload
+  C-0038:  # "image pull policy always"
+    nist: "SI-7 (integrity)"
+    why: "IfNotPresent can run stale images — Always ensures fresh image validation"
+
+# Remediation guidance output
+remediation:
+  enabled: true
+  verbose: true
+  # WHY: Verbose remediation shows exact kubectl commands to fix findings
+  # This is the output format CySA+ analysts need for lab practice
+
+# Integration with audit pipeline
+evidence:
+  saveResults: true
+  outputDir: /tmp/jsa-evidence
+  timestamp: true

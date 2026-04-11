@@ -1,0 +1,275 @@
+%YAML 1.1
+---
+# Suricata Gold-Standard Configuration Template
+# NIST SI-4 (System Monitoring), SI-3 (Malicious Code Protection)
+# Every directive below has a WHY comment explaining the security rationale.
+
+# WHY: Define HOME_NET to distinguish internal/external traffic.
+# Without this, rules using $HOME_NET and $EXTERNAL_NET variables have no effect.
+# Set this to your actual internal network range(s) — not the default.
+vars:
+  address-groups:
+    HOME_NET: "[10.0.0.0/8,172.16.0.0/12,192.168.0.0/16]"
+    # WHY: !$HOME_NET is how Suricata identifies external traffic.
+    EXTERNAL_NET: "!$HOME_NET"
+
+    # WHY: Define server CIDRs so rules can target specific server pools
+    # rather than matching all internal hosts. Reduces false positives.
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+
+  port-groups:
+    # WHY: HTTP_PORTS is used by http application-layer rules.
+    # Include non-standard HTTP ports your environment uses.
+    HTTP_PORTS: "80"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+
+# ─── Outputs ──────────────────────────────────────────────────────────────────
+# WHY: EVE JSON is the primary output format for SIEM integration.
+# Structured JSON allows Splunk, Elastic, Sentinel to ingest without parsing.
+# NIST SI-4 requires continuous monitoring output to a collection system.
+outputs:
+  - fast:
+      # WHY: fast.log provides human-readable quick review during incident response.
+      # Not a replacement for EVE JSON — it lacks structured metadata.
+      enabled: yes
+      filename: fast.log
+      append: yes
+
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      # WHY: Flush immediately so alerts are available to SIEM without buffering lag.
+      # Buffering saves I/O but creates detection delay.
+      xff:
+        enabled: no
+
+      types:
+        - alert:
+            # WHY: Payload capture is required for incident forensics (IR-4).
+            # Without payload, you know an alert fired but not what triggered it.
+            payload: yes
+            payload-printable: yes
+            # WHY: HTTP body capture enables credential theft detection review.
+            http-body: yes
+            http-body-printable: yes
+            # WHY: Include metadata (flowid, pcap_cnt) for alert-to-packet correlation.
+            metadata: yes
+            tagged-packets: yes
+
+        # WHY: DNS logging is NIST AU-2 requirement. DNS is the primary C2 channel
+        # (T1071.004). Without dns.log, lateral movement and C2 are invisible.
+        - dns:
+            # Log all queries and answers — not just failures
+            version: 2
+
+        # WHY: TLS logging captures certificate details, JA3 hashes, and SNI.
+        # Enables detection of self-signed certificates used by malware and
+        # encrypted C2 channels using suspicious certificates.
+        - tls:
+            extended: yes  # Include certificate details
+
+        # WHY: Flow logs provide connection metadata even when payload is encrypted.
+        # Used for beaconing detection and data exfiltration volume analysis.
+        - flow
+
+        # WHY: HTTP metadata logging enables URL-based threat detection and
+        # user-agent analysis without decrypting TLS (for plain HTTP traffic).
+        - http:
+            extended: yes
+
+        # WHY: SMTP logging detects phishing infrastructure, malware delivery,
+        # and data exfiltration via email.
+        - smtp
+
+        # WHY: FTP logging detects cleartext file transfers and data exfiltration.
+        - ftp
+
+        # WHY: File metadata enables detection of malicious file transfers
+        # and supports SI-7 (Software, Firmware, and Information Integrity).
+        - files:
+            force-magic: yes  # Detect file type by content, not extension
+
+        # WHY: SSH metadata (hassh) enables detection of automated SSH scanners
+        # and malware with distinctive SSH client fingerprints.
+        - ssh
+
+        # WHY: Packet/stats metadata enables performance monitoring to detect
+        # when Suricata is dropping packets (monitoring gaps = AU-9 violation).
+        - stats:
+            totals: yes
+            threads: no
+            deltas: no
+
+  # WHY: Stats log provides operational health data.
+  # A sensor dropping >1% packets should be investigated immediately.
+  - stats:
+      enabled: yes
+      filename: stats.log
+      append: yes
+      totals: yes
+      threads: no
+
+# ─── Rule Sources ─────────────────────────────────────────────────────────────
+# WHY: Rule loading order matters. local.rules last ensures custom rules
+# can override community rules with the same SID range.
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - suricata.rules     # WHY: Primary ET Open ruleset from suricata-update
+  - local.rules        # WHY: Site-specific rules — must be last
+
+# WHY: Classification config maps classtypes to priorities.
+# Higher priority = faster alert promotion in SIEM.
+classification-file: /etc/suricata/classification.config
+reference-config-file: /etc/suricata/reference.config
+
+# ─── Application Layer Protocols ──────────────────────────────────────────────
+# WHY: Application layer parsers enable protocol-level detection.
+# Without these, Suricata can only do IP/TCP/UDP header matching.
+app-layer:
+  protocols:
+    tls:
+      enabled: yes
+      # WHY: Detection on both encrypted and decrypted TLS content
+      detection-ports:
+        dp: 443
+
+    http:
+      enabled: yes
+      # WHY: Inspect HTTP on all common ports, not just 80.
+      # Attackers frequently use 8080, 8443, 8000 for C2.
+      memcap: 64mb
+      server-config:
+        - ports: [80, 8080, 8000, 3000]
+          personality: Apache_2_2
+          request-body-limit: 100kb   # WHY: Captures credential forms without storing full uploads
+          response-body-limit: 100kb
+
+    smtp:
+      enabled: yes
+    ssh:
+      enabled: yes
+    dns:
+      enabled: yes
+      # WHY: DNS parsers on both standard and non-standard ports.
+      # Malware frequently uses non-53 DNS for C2 (T1071.004).
+      detection-ports:
+        dp: 53
+    ftp:
+      enabled: yes
+    rfb:
+      enabled: yes
+      detection-ports:
+        dp: 5900
+
+# ─── Stream / TCP Settings ────────────────────────────────────────────────────
+stream:
+  # WHY: Memcap limits memory use under load. Too low = packet drops.
+  # Too high = resource exhaustion on the sensor host.
+  memcap: 64mb
+  checksum-validation: yes
+  inline: no              # WHY: Set to 'yes' for IPS mode (NFQ or DPDK required)
+  reassembly:
+    memcap: 256mb
+    depth: 1mb            # WHY: Buffer 1MB per stream for full payload reassembly
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+
+# ─── Detection Engine ─────────────────────────────────────────────────────────
+detect:
+  profile: medium
+  # WHY: Custom rules directory for rules added outside of suricata-update.
+  sgh-mpm-context: auto
+  inspection-recursion-limit: 3000
+
+# ─── Threading ────────────────────────────────────────────────────────────────
+# WHY: Threading config must match your CPU topology.
+# Auto-detect is safe for most environments. Override for dedicated sensors.
+threading:
+  set-cpu-affinity: no
+  cpu-affinity:
+    - management-cpu-set:
+        cpu: [0]
+    - receive-cpu-set:
+        cpu: [0]
+    - worker-cpu-set:
+        cpu: ["all"]
+        mode: "exclusive"
+        prio:
+          default: "medium"
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  default-log-level: notice
+  # WHY: Suricata's own log (not EVE). Captures startup errors, reload events.
+  outputs:
+    - console:
+        enabled: no     # WHY: Disable console in production (use syslog/file)
+    - file:
+        enabled: yes
+        level: info
+        filename: /var/log/suricata/suricata.log
+    - syslog:
+        enabled: no     # WHY: Enable if forwarding to remote syslog/SIEM
+
+# ─── PCAP Capture ─────────────────────────────────────────────────────────────
+pcap:
+  - interface: eth0   # WHY: Replace with your monitoring interface
+    # buffer-size: 16777216
+    # bpf-filter: "not port 22"  # WHY: Exclude management traffic from capture
+
+# ─── Network Interface ────────────────────────────────────────────────────────
+# WHY: Must match the interface connected to a mirror port or TAP.
+# On a host-based install, use the primary interface.
+# For inline IPS use AF_PACKET with a pair of interfaces.
+af-packet:
+  - interface: eth0
+    # WHY: Cluster-flow distributes packets across worker threads by flow.
+    # Ensures all packets of a single TCP stream go to the same thread.
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes   # WHY: Memory-mapped I/O reduces packet copy overhead
+
+# ─── Host OS Policy ──────────────────────────────────────────────────────────
+host-os-policy:
+  # WHY: OS-specific TCP normalization for accurate stream reassembly.
+  # Incorrect OS policy = stream evasion attacks succeed.
+  windows:
+    - "0.0.0.0/0"  # WHY: Default to Windows if unknown — most client OSes
+  bsd:
+    - 0.0.0.0/0
+  bsd-right:
+    - 0.0.0.0/0
+  old-linux:
+    - 0.0.0.0/0
+  linux:
+    - 0.0.0.0/0
+  old-solaris:
+    - 0.0.0.0/0
+  solaris:
+    - 0.0.0.0/0
+  hpux10:
+    - 0.0.0.0/0
+  hpux11:
+    - 0.0.0.0/0
+  irix:
+    - 0.0.0.0/0
+  macos:
+    - 0.0.0.0/0
+  vista:
+    - 0.0.0.0/0
+  windows2k3:
+    - 0.0.0.0/0

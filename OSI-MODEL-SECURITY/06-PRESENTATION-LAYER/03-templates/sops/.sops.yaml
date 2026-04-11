@@ -1,0 +1,104 @@
+# .sops.yaml — SOPS Configuration for Secrets Encryption
+# NIST: SC-28 (protection of information at rest), SC-12 (key management)
+# SOPS: Mozilla Secrets OPerationS — encrypts file contents, keeps structure readable
+# WHY: .env files and YAML secrets committed to git are SC-28 violations.
+#      SOPS encrypts values while leaving keys/structure visible for diffs.
+#      Git stores encrypted ciphertext. The key lives in Key Vault / age keyring.
+
+creation_rules:
+  # ── Kubernetes secrets ────────────────────────────────────────────────
+  - path_regex: secrets/.*\.yaml$
+    # WHY: Any file under secrets/ is encrypted with age key.
+    # age is a modern encryption tool (X25519 + ChaCha20-Poly1305).
+    # Simpler than PGP. No key server. No expiry complexity.
+    # SC-13: age uses only modern, non-deprecated algorithms.
+    age: >-
+      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    # REPLACE age1xxx... with your actual age public key.
+    # Generate: age-keygen -o key.txt (store private key securely, NOT in git)
+    # WHY: Only the public key is committed. The private key stays in the operator's
+    #      local keyring or in a CI secret (e.g., GitHub Actions secret SOPS_AGE_KEY).
+    encrypted_regex: "^(data|stringData|password|token|secret|key|credentials)$"
+    # WHY: encrypted_regex limits encryption to fields that are actually sensitive.
+    #      metadata.name, spec.selector, labels, etc. stay plaintext for readability
+    #      and git diff clarity. Only values that could be credentials are encrypted.
+
+  # ── Environment files ──────────────────────────────────────────────────
+  - path_regex: \.env(\..*)?$
+    # WHY: .env files contain credentials. Even .env.example may have real values.
+    #      Encrypt all .env files by default — the developer can explicitly exclude
+    #      .env.example by adding it to .gitignore if it truly has no secrets.
+    age: >-
+      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    encrypted_regex: ".*"
+    # WHY: Encrypt everything in .env files. Every line could be a credential.
+
+  # ── Helm values with secrets ───────────────────────────────────────────
+  - path_regex: helm/.*values-secret.*\.yaml$
+    # WHY: Helm values files that contain secrets should be separate from
+    #      non-secret values files (values.yaml stays plain, values-secrets.yaml
+    #      is encrypted with SOPS). This keeps the git diff clean for non-secret changes.
+    age: >-
+      age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    encrypted_regex: "^(password|token|secret|key|credentials|connectionString|apiKey)$"
+
+  # ── Azure Key Vault integration (production) ───────────────────────────
+  # Uncomment to use Azure Key Vault instead of age for team-shared access.
+  # WHY: Azure Key Vault allows multiple team members access without sharing
+  #      a private key file. Access is controlled by Azure RBAC + MFA.
+  # - path_regex: secrets/.*\.yaml$
+  #   azure_keyvault: https://<vault-name>.vault.azure.net/keys/<key-name>/<key-version>
+  #   # WHY: The SOPS key in AKV wraps the data encryption key. Only users with
+  #   #      Key Vault "Decrypt" permission can run sops --decrypt.
+  #   encrypted_regex: "^(data|stringData|password|token|secret|key|credentials)$"
+
+  # ── HashiCorp Vault integration (air-gap / on-prem) ───────────────────
+  # Uncomment to use HashiCorp Vault transit engine.
+  # WHY: For air-gapped environments where Azure/AWS KMS is unavailable.
+  # - path_regex: secrets/.*\.yaml$
+  #   hc_vault_uris: https://vault.internal:8200/v1/transit/keys/sops-key
+  #   encrypted_regex: "^(data|stringData|password|token|secret|key|credentials)$"
+
+  # ── Default: everything else is NOT encrypted ─────────────────────────
+  # WHY: Explicit opt-in for encryption. Files not matching above patterns
+  #      are stored plaintext. Add patterns above for new secret file types.
+  #      This avoids accidentally encrypting non-secret files.
+  - path_regex: .*
+    # No key specified = not encrypted (plaintext pass-through).
+    # This is intentional — SOPS requires explicit configuration for each
+    # file type. Unknown file types are not auto-encrypted.
+
+# ── Pre-commit integration ─────────────────────────────────────────────────
+# Add to .pre-commit-config.yaml to prevent unencrypted secrets:
+#
+# repos:
+#   - repo: https://github.com/gitleaks/gitleaks
+#     rev: v8.18.0
+#     hooks:
+#       - id: gitleaks
+#         # WHY: Block commits with detected secrets before they hit git history.
+#         # SC-28: Data at rest starts with what enters the repository.
+#
+#   - repo: local
+#     hooks:
+#       - id: sops-encrypt-check
+#         name: Check SOPS encryption
+#         entry: bash -c 'for f in $(git diff --cached --name-only); do
+#           if echo "$f" | grep -qE "secrets/.*\.yaml$|\.env"; then
+#             if ! head -1 "$f" | grep -q "ENC\["; then
+#               echo "ERROR: $f contains unencrypted secrets. Run: sops --encrypt --in-place $f"; exit 1;
+#             fi
+#           fi
+#         done'
+#         language: system
+#         pass_filenames: false
+
+# ── Usage ──────────────────────────────────────────────────────────────────
+# Encrypt: sops --encrypt --in-place secrets/my-secret.yaml
+# Decrypt: sops --decrypt secrets/my-secret.yaml
+# Edit:    sops secrets/my-secret.yaml  (opens decrypted in $EDITOR, re-encrypts on save)
+# View:    sops --decrypt secrets/my-secret.yaml | kubectl apply -f -
+#
+# CI/CD (GitHub Actions):
+#   env:
+#     SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}  # Store private key in Actions secret

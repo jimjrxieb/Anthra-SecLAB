@@ -1,0 +1,96 @@
+# least-privilege-role.yaml — K8s least-privilege Role template
+# NIST: AC-6 (Least Privilege), AC-2 (Account Management)
+# Usage: kubectl apply -f least-privilege-role.yaml
+#        Customize namespace, name, and rules for your workload
+
+# WHY: NIST AC-6 requires least privilege — grant only the minimum permissions
+# required for the task. This Role covers a typical application workload that
+# needs to read configuration and discover services, but not modify cluster state.
+# Replace with role-specific rules for your use case.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-minimal
+  namespace: default  # Change to your namespace
+  labels:
+    nist-control: AC-6
+    managed-by: seclab-l5
+  annotations:
+    # WHY: Annotate with NIST control and rationale for auditor review
+    nist-control: "AC-6 — Least Privilege"
+    purpose: "Minimum permissions for a typical application workload"
+    review-date: "Set to 90 days from deployment — review for scope creep"
+rules:
+  # WHY: ConfigMaps contain application configuration (feature flags, endpoints).
+  # get/list/watch allows reading but not modifying. Applications must not
+  # modify their own configuration via the API.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+
+  # WHY: Secret access is explicitly named — not implicit. Only grant if
+  # the application cannot use projected volume mounts or Vault agent injection.
+  # If using Vault or external-secrets-operator, REMOVE this rule entirely.
+  # Limit to get (no list — listing secrets reveals names of all secrets in namespace)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+
+  # WHY: Pod listing supports readiness checks and sidecar coordination.
+  # Never grant create/delete/patch for pods — that is cluster-admin territory.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+  # WHY: Service discovery requires listing services. No exec, no port-forward.
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding: bind the above Role to a specific ServiceAccount
+# WHY: Roles are useless without bindings. Explicit SA binding scopes
+# permissions to a single workload identity, not all pods in the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-minimal-binding
+  namespace: default  # Must match Role namespace
+  labels:
+    nist-control: AC-6
+    managed-by: seclab-l5
+  annotations:
+    nist-control: "AC-6 — Least Privilege"
+    purpose: "Bind app ServiceAccount to minimal Role"
+subjects:
+  # WHY: Bind to a named ServiceAccount, not a group or all service accounts.
+  # Named binding = explicit scope. Implicit group bindings are audit nightmares.
+  - kind: ServiceAccount
+    name: app-sa  # Change to your application's ServiceAccount name
+    namespace: default  # Must match SA namespace
+roleRef:
+  kind: Role
+  name: app-minimal
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ServiceAccount: dedicated SA per workload
+# WHY: Do not use the default SA. Create a named SA per application.
+# default SA is shared by all pods in the namespace that don't specify an SA.
+# Shared SA means a compromised pod can access another app's permissions.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: default  # Change to your namespace
+  labels:
+    nist-control: AC-2
+    managed-by: seclab-l5
+  annotations:
+    nist-control: "AC-2 — Account Management"
+    purpose: "Dedicated service account for application workload"
+# WHY: automountServiceAccountToken=false prevents all pods using this SA from
+# automatically receiving a K8s API token. Most workloads do not need K8s API
+# access. Override at the pod spec level if specific pods need it.
+automountServiceAccountToken: false

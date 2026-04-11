@@ -1,0 +1,57 @@
+{
+  "_comment": "Azure Key Vault Auto-Rotation Policy Template — L6 Presentation Layer",
+  "_nist": "SC-12 (cryptographic key establishment and management), SC-12(1) (availability)",
+  "_usage": "az keyvault key rotation-policy update --vault-name <vault> --name <key> --value @key-rotation-policy.json",
+  "_why": "SC-12 requires key management procedures including rotation schedules. Automated rotation eliminates the human error of forgetting to rotate keys and creates an auditable trail.",
+
+  "attributes": {
+    "expiryTime": "P90D",
+    "_expiryTime_why": "SC-12: 90-day key lifetime is the NIST-recommended maximum for asymmetric keys in high-value systems. NIST SP 800-57 Part 1 Table 2 recommends 1-2 years for symmetric keys, but 90 days provides defense-in-depth. If a key is compromised, the blast radius is limited to 90 days of data. FedRAMP Moderate requires documented rotation schedules — this makes it automatic and auditable."
+  },
+  "lifetimeActions": [
+    {
+      "action": {
+        "type": "Rotate",
+        "_rotate_why": "Automatic rotation: Azure Key Vault generates a new key version on the schedule below. Applications using the key ID (not version) automatically get the new key. No downtime, no human intervention."
+      },
+      "trigger": {
+        "timeBeforeExpiry": "P30D",
+        "_trigger_why": "SC-12(1) (availability): Rotate 30 days before expiry to ensure applications have time to pick up the new key before the old one expires. 30 days = sufficient buffer for applications with weekly deployment cycles. If rotation fails, there is a 30-day window to diagnose before the key expires."
+      }
+    },
+    {
+      "action": {
+        "type": "Notify",
+        "_notify_why": "SC-12: Generate notification 30 days before expiry for human review. Even with auto-rotation, humans should be alerted that rotation is occurring. Notifications go to Key Vault event subscriptions (Azure Event Grid) → alert → SOC."
+      },
+      "trigger": {
+        "timeBeforeExpiry": "P30D"
+      }
+    }
+  ],
+
+  "_additional_rotation_guidance": {
+    "emergency_rotation": {
+      "_why": "SC-12: If a key is suspected compromised, do not wait for scheduled rotation.",
+      "command": "az keyvault key rotate --vault-name <vault> --name <key-name>",
+      "after_rotation": [
+        "1. Identify all ciphertexts encrypted with old key version",
+        "2. Re-encrypt all data with new key version",
+        "3. Revoke access to old key version",
+        "4. Document incident and rotation in change log"
+      ]
+    },
+    "rotation_frequency_by_risk": {
+      "high_value_signing_keys": "P30D",
+      "standard_encryption_keys": "P90D",
+      "backup_encryption_keys": "P180D",
+      "archive_keys": "P365D",
+      "_why": "SC-12: Rotation frequency should match key sensitivity. Data signing keys have higher rotation requirements because they establish trust. Backup keys rotate less frequently because they are used infrequently and changing them requires re-encrypting all backups."
+    },
+    "certificate_rotation": {
+      "note": "Certificates use a different rotation mechanism",
+      "command": "az keyvault certificate create --vault-name <vault> --name <cert> --policy @cert-policy.json",
+      "_cert_why": "Certificates managed in Key Vault auto-renew before expiry if configured with the correct policy. TLS certificates should renew at 2/3 of their lifetime (e.g., 90-day cert renews at day 60)."
+    }
+  }
+}

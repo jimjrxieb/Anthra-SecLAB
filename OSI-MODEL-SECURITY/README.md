@@ -24,6 +24,42 @@ This is not a tool demo. The tool is secondary to the control and the governance
 | 06 | [Presentation](06-PRESENTATION-LAYER/) | SC, SI | BitLocker, Azure Key Vault, OpenSSL, hashcat |
 | 07 | [Application](07-APPLICATION-LAYER/) | SA, RA, AC, SI, AU | Sentinel + KQL, Splunk, ZAP, Semgrep, SQLMap |
 
+## Per-Layer Structure
+
+Every layer follows the same directory layout mirroring GP-CONSULTING/09-OSI-MODEL-SECURITY:
+
+```
+XX-LAYER-NAME/
+├── README.md                    # Layer overview, NIST controls, tools
+├── control-map.md               # NIST control → tool → enterprise equiv
+├── 01-auditors/                 # audit-*.sh — check state, PASS/WARN/FAIL
+├── 02-fixers/                   # fix-*.sh/md — generic best-practice remediation
+├── 03-templates/                # Dual-stack configs with WHY comments
+├── playbooks/                   # Full engagement cycle
+│   ├── 00-install-validate.md   # Install and validate tooling
+│   ├── 01-assess.md             # Baseline assessment
+│   ├── 01a-<tool>-audit.md      # Deep-dive audits
+│   ├── 02-fix-<CONTROL>.md      # Remediation by NIST control
+│   ├── 03-validate.md           # Post-fix re-audit
+│   └── 04-triage-alerts.md      # Daily SOC workflow
+├── scenarios/                   # Break/detect/fix/validate/governance
+├── evidence/                    # Scanner output (gitignored)
+└── tools/                       # Orchestration (run-all-audits.sh)
+```
+
+## Dual SIEM Support
+
+This lab supports two SIEM stacks — pick whichever matches your environment:
+
+| Stack | SIEM | EDR | IAM | Secrets |
+|-------|------|-----|-----|---------|
+| **Microsoft (CySA+ default)** | Sentinel + KQL | Defender for Endpoint | Entra ID | Azure Key Vault |
+| **Open-source (alternative)** | Splunk / Security Onion | Wazuh | Keycloak | HashiCorp Vault |
+
+Shared tools (both stacks): Suricata, Zeek, testssl.sh, ZAP, Semgrep, Trivy, Grype, kube-bench.
+
+At Layer 7, both `01a-sentinel-audit.md` and `01a-splunk-audit.md` playbooks exist. Templates include configs for both stacks.
+
 ## Methodology
 
 Every scenario follows the same cycle:

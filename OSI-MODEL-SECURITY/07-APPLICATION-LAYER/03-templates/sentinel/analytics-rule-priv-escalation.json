@@ -1,0 +1,87 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Microsoft Sentinel Analytics Rule: Privilege Escalation — Admin Role Assignment",
+    "nistControls": "AC-6 (least privilege), AU-6 (audit review), AC-2 (account management)",
+    "mitreAttack": "T1548 — Abuse Elevation Control Mechanism / Privilege Escalation",
+    "author": "JSA AppSec",
+    "version": "1.0.0",
+    "WHY": "Any assignment to Global Administrator, Privileged Role Administrator, or Security Administrator is a high-risk event. Legitimate assignments are rare. Attackers who gain these roles own the tenant. This rule fires immediately — no threshold, no tolerance window."
+  },
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the Log Analytics workspace (Sentinel)"
+      }
+    }
+  },
+  "variables": {
+    "ruleId": "priv-escalation-role-assign-01"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2022-11-01",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', variables('ruleId'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Privilege Escalation — High-Privilege Role Assigned",
+        "description": "Detects assignment of Global Administrator, Privileged Role Administrator, Security Administrator, or Privileged Authentication Administrator roles in Azure AD. Any such assignment requires immediate review. NIST AC-6, AC-2. MITRE T1548.",
+        "severity": "High",
+        "enabled": true,
+        "query": "AuditLogs\n| where TimeGenerated > ago(1h)\n| where OperationName == \"Add member to role\"\n| where Result == \"success\"\n| extend\n    TargetUser    = tostring(TargetResources[0].userPrincipalName),\n    RoleName      = tostring(TargetResources[1].displayName),\n    InitiatedBy   = tostring(InitiatedBy.user.userPrincipalName)\n| where RoleName in (\n    \"Global Administrator\",\n    \"Privileged Role Administrator\",\n    \"Security Administrator\",\n    \"Privileged Authentication Administrator\",\n    \"Exchange Administrator\",\n    \"SharePoint Administrator\"\n  )\n| project\n    TimeGenerated,\n    RoleName,\n    TargetUser,\n    InitiatedBy,\n    CorrelationId,\n    OperationName",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT5M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "PrivilegeEscalation",
+          "Persistence"
+        ],
+        "techniques": [
+          "T1548",
+          "T1098"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": []
+          }
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "TargetUser"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "InitiatedBy"
+              }
+            ]
+          }
+        ],
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        }
+      }
+    }
+  ]
+}

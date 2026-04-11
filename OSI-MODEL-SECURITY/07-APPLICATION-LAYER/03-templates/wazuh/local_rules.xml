@@ -1,0 +1,163 @@
+<!-- local_rules.xml — Custom Wazuh Detection Rules
+     NIST: AU-6 (audit review), SI-4 (monitoring), AC-6 (least privilege), SI-7 (integrity)
+     Deploy to: /var/ossec/etc/rules/local_rules.xml
+     Rule IDs: 100000-199999 are reserved for custom local rules
+     Restart: systemctl restart wazuh-manager
+-->
+<group name="jsa_custom,">
+
+  <!-- ─── Authentication Failures ──────────────────────────────────────── -->
+
+  <!-- High volume SSH failures from single source — brute force threshold -->
+  <!-- WHY: Wazuh's built-in rule 5712 fires per-failure; this fires on volume -->
+  <!-- NIST AC-7 (unsuccessful logon attempts), MITRE T1110 -->
+  <rule id="100001" level="12" frequency="10" timeframe="60" ignore="60">
+    <if_matched_sid>5716</if_matched_sid>
+    <!-- 5716 = SSH authentication failure -->
+    <description>SSH brute force: 10+ failures from $(srcip) in 60 seconds</description>
+    <group>authentication_failures,pci_dss_10.2.4,pci_dss_10.2.5,hipaa_164.312.b,nist_800_53_AC.7,nist_800_53_SI.4,gpg13_7.1,gdpr_IV_35.7.d,tsc_CC6.1,tsc_CC6.8</group>
+  </rule>
+
+  <!-- High volume Windows login failures — brute force on Windows (EventCode 4625) -->
+  <!-- NIST AC-7, MITRE T1110 -->
+  <rule id="100002" level="12" frequency="10" timeframe="60" ignore="60">
+    <if_matched_sid>60122</if_matched_sid>
+    <!-- 60122 = Windows EventCode 4625 logon failure -->
+    <description>Windows brute force: 10+ login failures from $(srcip) in 60 seconds</description>
+    <group>authentication_failures,nist_800_53_AC.7,nist_800_53_SI.4</group>
+  </rule>
+
+  <!-- ─── Privilege Escalation ─────────────────────────────────────────── -->
+
+  <!-- Sudo to root — user escalated to root via sudo -->
+  <!-- WHY: sudo to root should be rare and logged — AC-6 principle of least privilege -->
+  <!-- NIST AC-6 (least privilege), MITRE T1548.003 -->
+  <rule id="100010" level="9">
+    <if_sid>5402</if_sid>
+    <!-- 5402 = successful sudo command -->
+    <match>sudo.*root</match>
+    <description>Privilege escalation: $(dstuser) obtained root via sudo from $(srcuser)</description>
+    <group>privilege_escalation,nist_800_53_AC.6,nist_800_53_AU.6,mitre_T1548</group>
+  </rule>
+
+  <!-- su to root — user switched to root via su command -->
+  <!-- WHY: Direct root access bypasses sudo audit trail — higher severity -->
+  <!-- NIST AC-6, MITRE T1548 -->
+  <rule id="100011" level="10">
+    <if_sid>5501</if_sid>
+    <!-- 5501 = su session opened -->
+    <match>su root</match>
+    <description>Privilege escalation: $(srcuser) switched to root via su — no sudo audit trail</description>
+    <group>privilege_escalation,nist_800_53_AC.6,mitre_T1548</group>
+  </rule>
+
+  <!-- New user added to sudoers group -->
+  <!-- WHY: Any sudoers modification is a potential persistence mechanism -->
+  <!-- NIST AC-2 (account management), MITRE T1098 -->
+  <rule id="100012" level="13">
+    <if_sid>5902</if_sid>
+    <!-- 5902 = user added to group -->
+    <match>sudo|wheel|admin</match>
+    <description>Account escalation: user added to privileged group (sudo/wheel/admin)</description>
+    <group>privilege_escalation,account_changes,nist_800_53_AC.2,nist_800_53_AC.6,mitre_T1098</group>
+  </rule>
+
+  <!-- ─── File Integrity — Critical Paths ──────────────────────────────── -->
+
+  <!-- Change to /etc/passwd — user account modification -->
+  <!-- WHY: Unauthorized changes to passwd could create backdoor accounts -->
+  <!-- NIST SI-7 (integrity), MITRE T1098 -->
+  <rule id="100020" level="13">
+    <if_sid>550,553,554</if_sid>
+    <!-- 550,553,554 = syscheck FIM events (modified, added, deleted) -->
+    <field name="file">/etc/passwd</field>
+    <description>FIM alert: /etc/passwd modified — potential account manipulation</description>
+    <group>fim_alert,nist_800_53_SI.7,nist_800_53_AU.6,mitre_T1098,pci_dss_11.5</group>
+  </rule>
+
+  <!-- Change to /etc/shadow — password hash modification -->
+  <!-- WHY: Direct shadow modification bypasses passwd utility audit trail -->
+  <!-- NIST SI-7, MITRE T1003 (credential access) -->
+  <rule id="100021" level="15">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">/etc/shadow</field>
+    <description>CRITICAL FIM alert: /etc/shadow modified — credential dump or unauthorized password change</description>
+    <group>fim_alert,credentials,nist_800_53_SI.7,nist_800_53_IA.5,mitre_T1003,pci_dss_11.5</group>
+  </rule>
+
+  <!-- Change to sudoers -->
+  <!-- WHY: sudoers modification grants elevated privileges — persistence or escalation -->
+  <!-- NIST AC-6, SI-7, MITRE T1548 -->
+  <rule id="100022" level="14">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">/etc/sudoers|/etc/sudoers.d</field>
+    <description>FIM alert: sudoers modified — potential privilege escalation persistence</description>
+    <group>fim_alert,privilege_escalation,nist_800_53_AC.6,nist_800_53_SI.7,mitre_T1548</group>
+  </rule>
+
+  <!-- Change to SSH daemon config -->
+  <!-- WHY: sshd_config changes can enable backdoor access or weaken auth -->
+  <!-- NIST SI-7, SC-8 (transmission integrity), MITRE T1098 -->
+  <rule id="100023" level="13">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">/etc/ssh/sshd_config</field>
+    <description>FIM alert: sshd_config modified — SSH backdoor risk. Validate change immediately.</description>
+    <group>fim_alert,nist_800_53_SI.7,nist_800_53_SC.8,mitre_T1098</group>
+  </rule>
+
+  <!-- Change to crontab — persistence mechanism -->
+  <!-- WHY: Cron jobs are a primary Linux persistence mechanism — T1053 -->
+  <!-- NIST SI-7, MITRE T1053 (scheduled task) -->
+  <rule id="100024" level="12">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">/etc/crontab|/etc/cron.d|/var/spool/cron</field>
+    <description>FIM alert: crontab modified — potential scheduled task persistence</description>
+    <group>fim_alert,persistence,nist_800_53_SI.7,mitre_T1053</group>
+  </rule>
+
+  <!-- Change to system binaries -->
+  <!-- WHY: Binary replacement in /bin or /usr/bin = T1574 hijack attack -->
+  <!-- NIST SI-7, MITRE T1574 (hijack execution flow) -->
+  <rule id="100025" level="14">
+    <if_sid>550,553</if_sid>
+    <field name="file">/usr/bin|/usr/sbin|/bin|/sbin</field>
+    <description>FIM alert: system binary added or modified — potential binary hijacking (T1574)</description>
+    <group>fim_alert,nist_800_53_SI.7,mitre_T1574</group>
+  </rule>
+
+  <!-- ─── Process / Command Execution ──────────────────────────────────── -->
+
+  <!-- Suspicious command execution (common attacker tools) -->
+  <!-- WHY: These tools have legitimate uses but high attacker utility — escalate to analyst -->
+  <!-- NIST SI-4 (monitoring), MITRE T1059 -->
+  <rule id="100030" level="9">
+    <if_sid>5400</if_sid>
+    <!-- 5400 = audit daemon executed command -->
+    <match>nmap|masscan|tcpdump|wireshark|netcat|nc -|ncat|socat|msfconsole|mimikatz|procdump|crackmapexec|hydra|medusa</match>
+    <description>Security tool execution detected: $(command). Confirm authorized use.</description>
+    <group>process_monitor,nist_800_53_SI.4,mitre_T1059</group>
+  </rule>
+
+  <!-- Kubernetes exec into pod detected in audit log -->
+  <!-- WHY: kubectl exec is the #1 signal of active container compromise investigation -->
+  <!-- NIST SI-4, MITRE T1609 (container administration command) -->
+  <rule id="100040" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="verb">create</field>
+    <field name="requestURI">pods/exec</field>
+    <description>K8s audit: kubectl exec into pod $(objectRef.name) by $(user.username)</description>
+    <group>k8s_audit,nist_800_53_SI.4,nist_800_53_AU.6,mitre_T1609</group>
+  </rule>
+
+  <!-- Kubernetes secret access -->
+  <!-- WHY: Direct secret reads are sensitive — should go through app injection, not exec -->
+  <!-- NIST AC-6, MITRE T1552 (unsecured credentials) -->
+  <rule id="100041" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="verb">get|list</field>
+    <field name="requestURI">secrets</field>
+    <description>K8s audit: Secret access by $(user.username) in namespace $(objectRef.namespace)</description>
+    <group>k8s_audit,secrets,nist_800_53_AC.6,nist_800_53_IA.5,mitre_T1552</group>
+  </rule>
+
+</group>

@@ -1,0 +1,146 @@
+# strong-defaults.cnf — Hardened OpenSSL Configuration
+# NIST: SC-13 (cryptographic protection), SC-17 (public key infrastructure certificates)
+# Usage: OPENSSL_CONF=strong-defaults.cnf openssl <command>
+#   OR:  Copy to /etc/ssl/openssl.cnf for system-wide defaults
+# WHY: OpenSSL's compiled-in defaults allow weak algorithms for backward compatibility.
+#      This configuration enforces modern algorithms only. Any command using this
+#      config will refuse to use MD5, SHA-1, RC4, DES, or pre-TLS 1.2.
+
+# ── OpenSSL System Configuration ──────────────────────────────────────────
+openssl_conf = openssl_init
+
+[openssl_init]
+# WHY: Load both algorithm and SSL/TLS configuration sections.
+alg_section = evp_properties
+ssl_conf    = ssl_configuration
+
+# ── Algorithm Defaults ─────────────────────────────────────────────────────
+[evp_properties]
+# WHY: SC-13 — all cryptographic operations default to approved algorithms.
+# These are the defaults when no algorithm is specified explicitly.
+
+# Default hash algorithm for all operations (CSRs, CRLs, OCSP)
+default_md = sha256
+# WHY: sha256 replaces sha1 as the default. SHA-1 has known collision attacks
+# (SHAttered, 2017). NIST deprecated SHA-1 for digital signatures in 2013.
+# SHA-256 (SHA-2 family) is NIST-approved. SHA-3 is preferred for new systems.
+
+# ── SSL/TLS Configuration ──────────────────────────────────────────────────
+[ssl_configuration]
+system_default = ssl_defaults
+
+[ssl_defaults]
+# WHY: SC-13 requires only NIST-approved cryptographic algorithms in TLS.
+# TLS 1.0 and 1.1 have known weaknesses (BEAST, POODLE, LUCKY13).
+# NIST SP 800-52 Rev 2 requires TLS 1.2+ for federal systems.
+MinProtocol = TLSv1.2
+# Set TLSv1.3 if all clients support it (recommended for new deployments)
+# MinProtocol = TLSv1.3
+
+# WHY: CipherString excludes ALL weak ciphers:
+# !RC4     — RC4 stream cipher is broken (biased keystream, NIST prohibited 2015)
+# !MD5     — HMAC-MD5 in TLS is weak (collision attacks)
+# !DES     — DES is broken (56-bit key, brute-forceable in hours)
+# !3DES    — 3DES is deprecated (Sweet32 birthday attack, NIST deprecated 2023)
+# !SSLv3   — SSL 3.0 is broken (POODLE attack)
+# !EXPORT  — Export-grade ciphers are 40/56-bit (deliberately weakened, 1990s)
+# !aNULL   — Anonymous auth (no server identity verification)
+# !eNULL   — NULL encryption (plaintext in TLS)
+# !CAMELLIA — Not NIST-approved
+# !SEED    — Old Korean standard, not widely reviewed
+CipherString = DEFAULT:!RC4:!MD5:!DES:!3DES:!SSLv3:!EXPORT:!aNULL:!eNULL:!CAMELLIA:!SEED:!PSK
+
+# WHY: TLS 1.3 cipher suites (separate from TLS 1.2 CipherString).
+# All TLS 1.3 cipher suites are AEAD (Authenticated Encryption with Associated Data).
+# They are all safe — no weak options exist in TLS 1.3 by design.
+# This is the recommended set: AES-256-GCM and ChaCha20 (for performance on ARM).
+CipherSuites = TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
+
+# WHY: Prefer server cipher order. Prevents client downgrade attacks where
+# a client advertises weak ciphers hoping the server accepts them.
+Options = ServerPreference
+
+# ── Certificate Signing Request Defaults ──────────────────────────────────
+[ req ]
+# WHY: Default settings for certificate requests.
+# These apply when running: openssl req -new -key key.pem -out csr.pem
+default_bits        = 4096
+# WHY: 4096-bit RSA for new certificates. NIST SP 800-57 Table 2 recommends
+# 2048-bit minimum through 2030, 3072+ beyond 2030. 4096 provides margin.
+# For EC keys (preferred): use -newkey ec -pkeyopt ec_paramgen_curve:P-384
+
+default_md          = sha256
+# WHY: SHA-256 for CSR signature. Never use sha1 — it is rejected by modern CAs.
+
+prompt              = no
+# WHY: Non-interactive mode. Fill distinguished_name section below.
+
+distinguished_name  = req_distinguished_name
+req_extensions      = v3_req
+
+[ req_distinguished_name ]
+C                   = US
+ST                  = State
+L                   = City
+O                   = Organization
+OU                  = Security
+CN                  = example.internal
+emailAddress        = security@example.internal
+
+[ v3_req ]
+# WHY: X.509 v3 extensions for modern certificate handling.
+subjectAltName = @alt_names
+# WHY: All modern TLS requires Subject Alternative Names (SAN).
+# Common Name alone is not sufficient. Browsers and curl reject certs without SAN.
+keyUsage = critical, digitalSignature, keyEncipherment
+# WHY: Limit key usage to its intended purpose. A TLS cert should not be
+# usable for code signing or CA signing.
+extendedKeyUsage = serverAuth, clientAuth
+
+[ alt_names ]
+DNS.1 = example.internal
+DNS.2 = *.example.internal
+# IP.1 = 10.0.0.1  # Only add IP SANs if necessary (IP certs are less flexible)
+
+# ── CA Configuration (for internal PKI) ────────────────────────────────────
+[ v3_ca ]
+# WHY: CA certificate extensions. Used when creating an internal CA.
+# SC-17: PKI certificates must have appropriate extensions.
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true, pathlen:0
+# WHY: pathlen:0 means this CA cannot issue subordinate CAs — it's a leaf CA.
+# Prevents the CA cert from being misused to create unauthorized intermediate CAs.
+keyUsage               = critical, cRLSign, keyCertSign
+
+# ── OCSP / CRL Configuration ───────────────────────────────────────────────
+[ ocsp ]
+# WHY: OCSP stapling allows clients to verify certificate revocation without
+# contacting the CA directly. SC-17 requires revocation checking capability.
+basicConstraints       = CA:FALSE
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer
+keyUsage               = critical, digitalSignature
+extendedKeyUsage       = critical, OCSPSigning
+
+# ── Example Commands Using This Config ────────────────────────────────────
+# Generate EC key (preferred over RSA for new deployments):
+#   openssl ecparam -name P-384 -genkey -noout -out ec-key.pem
+#
+# Generate RSA key (4096-bit):
+#   OPENSSL_CONF=strong-defaults.cnf openssl genrsa -out rsa-key.pem 4096
+#
+# Create CSR:
+#   OPENSSL_CONF=strong-defaults.cnf openssl req -new -key key.pem -out csr.pem
+#
+# Create self-signed cert (lab use only):
+#   OPENSSL_CONF=strong-defaults.cnf openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 \
+#     -keyout key.pem -out cert.pem -days 365 -nodes
+#
+# Verify TLS handshake uses strong config:
+#   OPENSSL_CONF=strong-defaults.cnf openssl s_client -connect host:443
+#   # Should show TLSv1.2 or TLSv1.3, not SSLv3/TLSv1.0/TLSv1.1
+#
+# Test that weak ciphers are rejected:
+#   OPENSSL_CONF=strong-defaults.cnf openssl s_client -connect host:443 -cipher RC4-SHA
+#   # Should fail: "no ciphers available" or "no shared ciphers"

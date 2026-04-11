@@ -1,0 +1,131 @@
+{
+  "_comment": "Azure Key Vault Access Policy Template — L6 Presentation Layer",
+  "_nist": "AC-6 (least privilege), SC-12 (cryptographic key management), SC-28 (encryption at rest)",
+  "_usage": "az keyvault set-policy --name <vault> --object-id <principal-id> --key-permissions ... --secret-permissions ...",
+  "policies": {
+    "application_identity": {
+      "_why": "AC-6 (least privilege): Application service principal gets minimum permissions to use keys and secrets. No administrative access. No ability to create, delete, or backup keys. If this identity is compromised, the attacker can encrypt/decrypt data but cannot extract or destroy the key.",
+      "object_id": "<app-service-principal-object-id>",
+      "key_permissions": [
+        "get",
+        "list",
+        "encrypt",
+        "decrypt",
+        "wrapKey",
+        "unwrapKey",
+        "sign",
+        "verify"
+      ],
+      "_key_permissions_why": {
+        "get": "Read key metadata — required for application to verify key exists",
+        "list": "List key versions — required for key rotation awareness",
+        "encrypt": "Encrypt data using the key — application write operations",
+        "decrypt": "Decrypt data using the key — application read operations",
+        "wrapKey": "Wrap a symmetric key — required for envelope encryption pattern",
+        "unwrapKey": "Unwrap a symmetric key — required for envelope encryption pattern",
+        "sign": "Create digital signatures — required if signing payloads",
+        "verify": "Verify digital signatures — required if verifying payloads",
+        "NOT_GRANTED": ["create", "delete", "update", "backup", "restore", "recover", "purge", "rotate", "release", "getRotationPolicy", "setRotationPolicy", "import"]
+      },
+      "secret_permissions": [
+        "get",
+        "list"
+      ],
+      "_secret_permissions_why": {
+        "get": "Read secret value — application retrieves connection strings, API keys",
+        "list": "List secret names — allows application to verify secrets exist",
+        "NOT_GRANTED": ["set", "delete", "backup", "restore", "recover", "purge"]
+      },
+      "certificate_permissions": []
+    },
+    "security_team_admin": {
+      "_why": "AC-6 (least privilege) + SC-12 (key management): Security team gets full key management permissions but this is a NAMED role, not a service account. Requires MFA. Every operation is logged. Reviewed quarterly. No application service accounts in this group.",
+      "object_id": "<security-team-group-object-id>",
+      "key_permissions": [
+        "get",
+        "list",
+        "create",
+        "delete",
+        "update",
+        "backup",
+        "restore",
+        "recover",
+        "purge",
+        "import",
+        "rotate",
+        "getRotationPolicy",
+        "setRotationPolicy",
+        "release",
+        "encrypt",
+        "decrypt",
+        "wrapKey",
+        "unwrapKey",
+        "sign",
+        "verify"
+      ],
+      "_admin_why": "Full access for key lifecycle management. Rotation, backup, recovery. Audit logs required for all operations. Must be human identity with MFA — no service accounts.",
+      "secret_permissions": [
+        "get",
+        "list",
+        "set",
+        "delete",
+        "backup",
+        "restore",
+        "recover",
+        "purge"
+      ],
+      "certificate_permissions": [
+        "get",
+        "list",
+        "create",
+        "delete",
+        "update",
+        "import",
+        "backup",
+        "restore",
+        "recover",
+        "purge",
+        "managecontacts",
+        "manageissuers",
+        "getissuers",
+        "listissuers",
+        "setissuers",
+        "deleteissuers"
+      ]
+    },
+    "read_only_auditor": {
+      "_why": "AC-6 + AU-9 (audit information protection): Auditor gets read access to verify configurations and review key metadata. Cannot access secret values or key material. Used for compliance reviews and access certification.",
+      "object_id": "<auditor-group-object-id>",
+      "key_permissions": [
+        "get",
+        "list"
+      ],
+      "secret_permissions": [
+        "list"
+      ],
+      "_secret_read_only_why": "Auditors can list secrets (see names) but NOT get values. Names reveal configuration. Values are confidential. SC-28 — limit access to encrypted material.",
+      "certificate_permissions": [
+        "get",
+        "list"
+      ]
+    }
+  },
+  "vault_properties": {
+    "sku": "premium",
+    "_sku_why": "SC-12(1): Premium SKU provides HSM-backed key storage (FIPS 140-3 Level 3). Standard SKU is software-backed and insufficient for FedRAMP High.",
+    "enableSoftDelete": true,
+    "softDeleteRetentionInDays": 90,
+    "_softdelete_why": "SC-12: 90-day soft delete window prevents accidental key deletion. Keys can be recovered. Satisfies 'protection against unauthorized destruction' requirement.",
+    "enablePurgeProtection": true,
+    "_purge_why": "SC-12: Prevents permanent deletion even by admins during retention period. Protects against insider threat / ransomware attempting to delete encryption keys.",
+    "enableRbacAuthorization": true,
+    "_rbac_why": "AC-6: Azure RBAC provides more granular control and audit logging than access policies. Prefer RBAC for new vaults.",
+    "networkAcls": {
+      "defaultAction": "Deny",
+      "_network_why": "SC-7 (boundary protection): Deny by default. Only allow traffic from known IP ranges and VNet service endpoints. Key Vault should not be internet-accessible.",
+      "bypass": "AzureServices",
+      "virtualNetworkRules": [],
+      "ipRules": []
+    }
+  }
+}

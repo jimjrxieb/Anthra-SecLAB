@@ -1,0 +1,102 @@
+---
+# Kubernetes NetworkPolicy: Default Deny All
+# NIST Controls: AC-4 (Information Flow Enforcement), SC-7 (Boundary Protection)
+#
+# WHY: NIST AC-4 requires information flow enforcement — traffic between
+# components must be explicitly authorized, not implicitly allowed.
+# Without a default-deny NetworkPolicy, all pods in a namespace can
+# communicate with any other pod in the cluster. This is a flat network
+# at the Kubernetes layer, identical to the worst-case scenario at L3.
+#
+# This policy blocks ALL ingress and egress for all pods in the namespace.
+# After applying this, you MUST add explicit allow policies for:
+#   - App-to-database traffic
+#   - App-to-app API calls
+#   - External ingress from LoadBalancer/Ingress controller
+#   - Egress to external services (if required)
+#
+# Apply:    kubectl apply -f default-deny.yaml -n <namespace>
+# Verify:   kubectl get networkpolicy -n <namespace>
+# Test:     kubectl exec -it <pod> -- curl <other-pod-ip>  # Should fail
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  # WHY: Apply this to every non-system namespace. kube-system requires
+  # wide-open networking for cluster internal communication.
+  namespace: default   # Change to target namespace or use -n flag on kubectl apply
+  labels:
+    app.kubernetes.io/managed-by: "jsa-seclab"
+    security.nist.gov/control: "AC-4"
+spec:
+  # WHY: Empty podSelector matches ALL pods in the namespace.
+  # This is intentional — default deny must cover every pod, not just
+  # pods with specific labels. Partial coverage creates a false sense of security.
+  podSelector: {}
+
+  # WHY: Explicitly list both Ingress and Egress policy types.
+  # A NetworkPolicy that only lists Ingress still allows all egress.
+  # Both types are required for full information flow control (AC-4).
+  policyTypes:
+    - Ingress
+    - Egress
+  # Note: No ingress or egress rules are defined here.
+  # The absence of rules under each type = deny all for that direction.
+
+---
+# Example: Allow specific app-to-database ingress
+# Apply this in addition to default-deny to restore required flows.
+# WHY: This is the correct AC-4 pattern — deny all, then explicitly allow
+# only the minimum required flows. Not the reverse.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-database
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: "jsa-seclab"
+    security.nist.gov/control: "AC-4"
+spec:
+  podSelector:
+    matchLabels:
+      # WHY: Target only the database pods — not all pods in the namespace.
+      # Label-based targeting is more precise than namespace-level allow rules.
+      tier: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # WHY: Allow traffic only from pods labeled tier=app.
+        # This means if an attacker compromises a logging pod, they cannot
+        # reach the database directly — only app pods can.
+        - podSelector:
+            matchLabels:
+              tier: app
+      ports:
+        - protocol: TCP
+          port: 5432   # PostgreSQL — change for your DB port
+
+---
+# Example: Allow DNS egress (required for most workloads)
+# WHY: Pods need to resolve DNS for service discovery.
+# Default-deny blocks this. Without this exception, all DNS queries fail
+# and services cannot connect to each other by name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: "jsa-seclab"
+    security.nist.gov/control: "AC-4"
+spec:
+  podSelector: {}  # All pods need DNS
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

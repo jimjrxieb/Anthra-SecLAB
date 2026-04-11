@@ -1,0 +1,219 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "comment": "Azure NSG Baseline Template — NIST SC-7, AC-4, AU-2. Replace ADMIN_CIDR_HERE with your actual management network CIDR before deploying.",
+  "parameters": {
+    "nsgName": {
+      "type": "string",
+      "defaultValue": "jsa-baseline-nsg",
+      "metadata": {
+        "description": "Name for the Network Security Group"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for NSG deployment"
+      }
+    },
+    "adminCidr": {
+      "type": "string",
+      "defaultValue": "ADMIN_CIDR_HERE",
+      "metadata": {
+        "description": "CIDR block for management access (e.g. 10.10.0.0/16). Must not be 0.0.0.0/0 — SC-7 violation."
+      }
+    },
+    "storageAccountId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Storage account resource ID for NSG flow log storage (AU-2 requirement)"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2022-07-01",
+      "name": "[parameters('nsgName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "nist-control": "SC-7,AC-4,AU-2",
+        "managed-by": "jsa-seclab",
+        "created-date": "2026-04-10"
+      },
+      "properties": {
+        "securityRules": [
+
+          {
+            "name": "Allow-SSH-Admin-Inbound",
+            "properties": {
+              "comment": "WHY: NIST SC-7 boundary protection. SSH must only be accessible from designated management network. Open SSH (0.0.0.0/0) = automatic FAIL on any compliance review. Priority 100 ensures this rule is evaluated before the default deny.",
+              "priority": 100,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "[parameters('adminCidr')]",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "22",
+              "description": "SC-7: SSH restricted to admin CIDR. NIST AC-17."
+            }
+          },
+
+          {
+            "name": "Allow-RDP-Admin-Inbound",
+            "properties": {
+              "comment": "WHY: NIST SC-7. RDP is the primary vector for lateral movement in cloud environments. Restricting to admin CIDR prevents credential stuffing attacks from the internet. Any Azure resource with RDP open to internet is a critical finding.",
+              "priority": 110,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "[parameters('adminCidr')]",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "3389",
+              "description": "SC-7: RDP restricted to admin CIDR. NIST AC-17."
+            }
+          },
+
+          {
+            "name": "Allow-HTTPS-Inbound",
+            "properties": {
+              "comment": "WHY: HTTPS is the standard web access protocol. Allowing 443 from any source is generally acceptable for public-facing web services. Restrict sourceAddressPrefix to a specific CIDR for internal-only services.",
+              "priority": 200,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "443",
+              "description": "Allow HTTPS from any source for public web services"
+            }
+          },
+
+          {
+            "name": "Allow-HTTP-Inbound",
+            "properties": {
+              "comment": "WHY: HTTP included only for services that redirect to HTTPS. If your service does not serve HTTP content, disable this rule. SC-8 requires transmission confidentiality — HTTP without redirect is a finding.",
+              "priority": 210,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "80",
+              "description": "HTTP inbound — enable only if redirecting to HTTPS"
+            }
+          },
+
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "comment": "WHY: NIST SC-7 requires default-deny at network boundaries. Priority 4096 (highest number = lowest priority in Azure) ensures this fires last. All traffic not explicitly allowed above is denied. This is the default-deny 'backstop' that satisfies SC-7.",
+              "priority": 4096,
+              "protocol": "*",
+              "access": "Deny",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "description": "SC-7: Default deny all inbound traffic not explicitly allowed"
+            }
+          },
+
+          {
+            "name": "Allow-HTTPS-Outbound",
+            "properties": {
+              "comment": "WHY: HTTPS outbound is required for Windows Update, Azure Monitor, and most application dependencies. Restrict destinationAddressPrefix to specific Azure service tags for high-security environments.",
+              "priority": 100,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Outbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "443",
+              "description": "Allow HTTPS egress for updates and monitoring"
+            }
+          },
+
+          {
+            "name": "Allow-DNS-Outbound",
+            "properties": {
+              "comment": "WHY: DNS resolution is required for all network communication. Azure DNS (168.63.129.16) must be reachable. Blocking DNS breaks all hostname-based connectivity.",
+              "priority": 110,
+              "protocol": "Udp",
+              "access": "Allow",
+              "direction": "Outbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "53",
+              "description": "Allow DNS egress for hostname resolution"
+            }
+          },
+
+          {
+            "name": "Deny-All-Outbound",
+            "properties": {
+              "comment": "WHY: NIST AC-4 (Information Flow Enforcement) requires controlling egress as well as ingress. Default-deny outbound prevents a compromised host from exfiltrating data to arbitrary destinations. Only enable if you have explicit egress allow rules for all required traffic above.",
+              "priority": 4096,
+              "protocol": "*",
+              "access": "Deny",
+              "direction": "Outbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "description": "AC-4: Default deny all outbound traffic not explicitly allowed"
+            }
+          }
+
+        ]
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/networkWatchers/flowLogs",
+      "apiVersion": "2022-07-01",
+      "name": "[concat('NetworkWatcher_', parameters('location'), '/', parameters('nsgName'), '-flowlog')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+      ],
+      "condition": "[not(empty(parameters('storageAccountId')))]",
+      "properties": {
+        "comment": "WHY: NIST AU-2 requires logging all security-relevant events at system boundaries. NSG flow logs record every connection attempt (allowed and denied) with source IP, destination, port, and protocol. Without flow logs, you cannot reconstruct attack paths or detect slow-and-low scanning.",
+        "enabled": true,
+        "storageId": "[parameters('storageAccountId')]",
+        "targetResourceId": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]",
+        "retentionPolicy": {
+          "days": 90,
+          "enabled": true,
+          "comment": "WHY: 90-day retention satisfies most compliance frameworks (NIST 800-53 AU-11 requires minimum retention based on impact level). Increase to 365 for FedRAMP High."
+        },
+        "format": {
+          "type": "JSON",
+          "version": 2,
+          "comment": "WHY: Version 2 flow logs include MAC address and additional metadata not present in version 1. Version 2 is required for Azure Traffic Analytics integration."
+        }
+      }
+    }
+  ],
+
+  "outputs": {
+    "nsgId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+    },
+    "nsgName": {
+      "type": "string",
+      "value": "[parameters('nsgName')]"
+    }
+  }
+}

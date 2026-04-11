@@ -1,0 +1,84 @@
+# encryption-config.yaml — Kubernetes EncryptionConfiguration
+# NIST: SC-28 (protection of information at rest)
+# Usage: Referenced by kube-apiserver --encryption-provider-config flag
+# WHY: Without this, K8s Secrets are stored as base64 in etcd — NOT encrypted.
+#      Anyone with direct etcd access can read all secrets in plaintext.
+#      This configuration enables AES-256-CBC encryption for Secrets at rest.
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+      # WHY: Secrets are the primary concern — they hold credentials, tokens, TLS certs.
+      # ConfigMaps are not encrypted by default. Add them here if they hold sensitive data:
+      # - configmaps
+    providers:
+      - aescbc:
+          # WHY: aescbc = AES-256-CBC. This is the K8s recommended encryption provider.
+          # It uses a static key stored on the control plane node. Safer than no encryption,
+          # but the key is on disk. For higher security, use KMS provider (AWS KMS / Azure KV).
+          keys:
+            - name: key1
+              # WHY: name: key1 is the active key label. When rotating, you add key2 here
+              # (or keep key1 but change the value) and the old key moves to the bottom.
+              # k8s reads keys top-to-bottom: key1 is used for NEW writes.
+              secret: REPLACE_WITH_BASE64_32BYTE_KEY
+              # Generate: openssl rand -base64 32
+              # OR: python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"
+              # CRITICAL: Store this key in Azure Key Vault or HashiCorp Vault.
+              # If you lose this key, you cannot decrypt your secrets. No recovery.
+      - identity: {}
+        # WHY: identity{} = read without decryption (raw base64).
+        # REQUIRED during migration so existing unencrypted secrets can still be read.
+        # After running: kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+        # (which re-encrypts all existing secrets with key1), REMOVE identity{} from this list.
+        # WHY remove identity{}: Leaving identity{} as fallback means an attacker who
+        # bypasses the encryption config can still read secrets. Remove it after migration.
+
+  # ── KMS Provider (production recommendation) ──────────────────────────
+  # For production, replace aescbc with the KMS provider.
+  # WHY: KMS provider stores the encryption key in a cloud HSM (AWS KMS / Azure Key Vault).
+  #      The key is NEVER on disk on the control plane. FIPS 140-3 Level 3 protection.
+  #      Envelope encryption: KMS wraps a per-secret DEK, DEK encrypts the secret.
+  #
+  # Example: AWS KMS
+  # - resources:
+  #     - secrets
+  #   providers:
+  #     - kms:
+  #         apiVersion: v2
+  #         name: aws-kms-encryption
+  #         endpoint: unix:///var/run/kms-plugin/socket.sock
+  #         # WHY: KMS plugin (aws-encryption-provider) runs as a sidecar on the apiserver.
+  #         # It handles the envelope encryption — apiserver doesn't manage keys directly.
+  #         # SC-12(1): Key material stays in AWS KMS (FIPS 140-3 Level 3 HSM).
+  #     - identity: {}  # Remove after migration
+  #
+  # Example: Azure Key Vault (using k8s-azure-kms-plugin)
+  # - resources:
+  #     - secrets
+  #   providers:
+  #     - kms:
+  #         apiVersion: v2
+  #         name: azure-kv-encryption
+  #         endpoint: unix:///opt/azure/kms/socket.sock
+  #     - identity: {}  # Remove after migration
+
+# ── Post-deployment verification ────────────────────────────────────────
+# After applying this config and restarting kube-apiserver:
+#
+# 1. Re-encrypt all existing secrets:
+#    kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+#
+# 2. Verify encryption via etcdctl (on control plane node):
+#    ETCDCTL_API=3 etcdctl get /registry/secrets/default/my-secret \
+#      --endpoints=https://127.0.0.1:2379 \
+#      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+#      --cert=/etc/kubernetes/pki/etcd/server.crt \
+#      --key=/etc/kubernetes/pki/etcd/server.key | hexdump | head
+#    # EXPECTED: output begins with 'k8s:enc:aescbc:v1' (hex: 6b38733a656e633a)
+#    # FAIL: if output begins with 'k8s:' without 'enc:' — not encrypted
+#
+# 3. Normal kubectl access still works — encryption is transparent:
+#    kubectl get secret my-secret -n default -o yaml
+#    # Returns decrypted value via normal API path

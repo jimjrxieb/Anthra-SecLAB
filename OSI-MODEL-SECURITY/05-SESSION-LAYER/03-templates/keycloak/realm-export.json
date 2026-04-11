@@ -1,0 +1,120 @@
+{
+  "_comment": "Hardened Keycloak Realm Configuration Template",
+  "_nist": "AC-12 (session termination), SC-23 (session authenticity), IA-2 (authentication), AC-7 (account lockout)",
+  "_usage": "Import via Keycloak admin UI or: curl -X POST KC_URL/admin/realms -H 'Authorization: Bearer TOKEN' -d @realm-export.json",
+
+  "realm": "YOUR-REALM-NAME",
+  "enabled": true,
+  "displayName": "Hardened Realm",
+
+  "_session_comment": "SSO Session timeouts — NIST AC-12 session termination controls",
+  "ssoSessionIdleTimeout": 1800,
+  "_ssoSessionIdleTimeout_why": "WHY: 30-minute idle timeout. NIST AC-12 requires session termination after inactivity. 1800s = 30min — standard for non-privileged users.",
+
+  "ssoSessionMaxLifespan": 36000,
+  "_ssoSessionMaxLifespan_why": "WHY: 10-hour max session lifespan. Even active sessions must re-authenticate. Prevents indefinite sessions that bypass token revocation.",
+
+  "ssoSessionIdleTimeoutRememberMe": 3600,
+  "_ssoSessionIdleTimeoutRememberMe_why": "WHY: If remember-me is ever enabled, restrict idle to 1 hour. More restrictive than standard session.",
+
+  "ssoSessionMaxLifespanRememberMe": 86400,
+  "_ssoSessionMaxLifespanRememberMe_why": "WHY: Max 24 hours even with remember-me enabled. Prevents multi-week persistent sessions.",
+
+  "accessTokenLifespan": 300,
+  "_accessTokenLifespan_why": "WHY: Access tokens expire in 5 minutes. Short-lived access tokens limit blast radius of token theft. Application must use refresh token to get new access token.",
+
+  "accessCodeLifespan": 60,
+  "_accessCodeLifespan_why": "WHY: Authorization codes expire in 60 seconds. Prevents code interception and replay attacks (SC-23 session authenticity).",
+
+  "rememberMe": false,
+  "_rememberMe_why": "WHY: Remember-me disabled. Creates long-lived sessions that bypass AC-12 timeout controls. Users must re-authenticate per session.",
+
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+
+  "_bruteforce_comment": "Brute force protection — NIST AC-7 (unsuccessful login attempts)",
+  "bruteForceProtected": true,
+  "_bruteForceProtected_why": "WHY: Required. Without brute force protection, password spray and credential stuffing attacks run uninhibited. NIST AC-7 requires lockout after failed attempts.",
+
+  "permanentLockout": false,
+  "_permanentLockout_why": "WHY: Permanent lockout creates DoS vectors (attacker locks all accounts). Use temporary lockout with escalating waits instead.",
+
+  "maxTemporaryLockouts": 3,
+  "minimumQuickLoginWaitSeconds": 60,
+
+  "failureFactor": 5,
+  "_failureFactor_why": "WHY: Lock after 5 failed attempts. Allows for typos but stops spray attacks that typically use >10 attempts per account.",
+
+  "waitIncrementSeconds": 30,
+  "_waitIncrementSeconds_why": "WHY: First lockout = 30-second wait. Exponential backoff punishes repeated failures more harshly.",
+
+  "maxFailureWaitSeconds": 900,
+  "_maxFailureWaitSeconds_why": "WHY: Maximum lockout period = 15 minutes. Long enough to stop automated attacks, short enough to not create DoS.",
+
+  "maxDeltaTimeSeconds": 43200,
+  "quickLoginCheckMilliSeconds": 1000,
+
+  "_password_policy_comment": "Password policy — NIST IA-5 (authenticator management)",
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername and notEmail and passwordHistory(5)",
+  "_passwordPolicy_why": "WHY: NIST SP 800-63B minimum 8 chars; 12-char minimum provides better entropy. Mixed case + digits + special chars. No reuse of last 5 passwords. NotUsername/notEmail prevent trivial guessing.",
+
+  "_mfa_comment": "Required actions — NIST IA-2 (multi-factor authentication)",
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "config": {},
+      "_why": "WHY: All new users must configure TOTP before first login. Makes MFA mandatory, not optional. NIST IA-2 requires MFA for all access to sensitive systems."
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 50,
+      "config": {},
+      "_why": "WHY: Verified email required before access. Prevents account creation with non-existent emails and supports account recovery."
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 30,
+      "config": {},
+      "_why": "WHY: Not a default action — used for forced resets on compromised accounts or policy changes. Keep enabled so admins can trigger."
+    }
+  ],
+
+  "_otp_comment": "OTP (TOTP) policy — RFC 6238 compliant",
+  "otpPolicyType": "totp",
+  "_otpPolicyType_why": "WHY: TOTP (time-based) over HOTP (counter-based). TOTP codes expire every 30s; HOTP codes are valid until used — TOTP has shorter validity window.",
+
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "_otpPolicyAlgorithm_why": "WHY: SHA1 is standard for TOTP per RFC 6238. SHA256/SHA512 are more secure but not universally supported by authenticator apps (Google Authenticator, Authy, Microsoft Authenticator).",
+
+  "otpPolicyDigits": 6,
+  "_otpPolicyDigits_why": "WHY: 6-digit codes are RFC 6238 standard and universally supported. 8-digit provides marginal security improvement at cost of usability.",
+
+  "otpPolicyPeriod": 30,
+  "_otpPolicyPeriod_why": "WHY: 30-second windows are RFC 6238 standard. Shorter windows cause usability problems; longer windows extend the attack window for intercepted codes.",
+
+  "otpPolicyLookAheadWindow": 1,
+  "_otpPolicyLookAheadWindow_why": "WHY: Allow 1 window drift (30 seconds each direction) to handle clock skew. Wider windows allow more code interception attempts.",
+
+  "otpSupportedApplications": [
+    "totpAppFreeOTPName",
+    "totpAppGoogleAuthenticatorName",
+    "totpAppMicrosoftAuthenticatorName"
+  ],
+
+  "_ssl_comment": "SSL required — NIST SC-8 (transmission confidentiality) — set externally via reverse proxy",
+  "sslRequired": "external",
+  "_sslRequired_why": "WHY: Require SSL for external connections. Session tokens in transit must be protected. If behind a TLS-terminating proxy, set to external."
+}

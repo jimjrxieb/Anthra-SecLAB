@@ -64,7 +64,11 @@
       "Bash(ip route:*)",
       "Bash(ip addr:*)",
       "Bash(docker network:*)",
-      "Bash(bridge link:*)"
+      "Bash(bridge link:*)",
+      "Bash(grep -E \"\\\\.\\(yaml|yml|json|md\\)$\")",
+      "Bash(find:*)",
+      "Bash(ls -la /home/jimmie/linkops-industries/GP-copilot/GP-PROJECTS/01-instance/slot-3/Anthra-SecLAB/OSI-MODEL-SECURITY/*/playbooks/)",
+      "Bash(ls:*)"
     ]
   }
 }

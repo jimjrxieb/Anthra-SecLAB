@@ -1,0 +1,142 @@
+{
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "version": "Notebook/1.0",
+  "metadata": {
+    "description": "SOC Overview Workbook — Alert volume, top sources, MTTD/MTTR, open incidents by severity",
+    "nistControls": "AU-6 (audit review and analysis), SI-4 (information system monitoring)",
+    "author": "JSA AppSec",
+    "WHY": "SOC analysts need a single pane of glass. This workbook answers: Are we getting alerts? From what? How fast are we finding and fixing them?"
+  },
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# SOC Overview — Security Operations Dashboard\n\nKey metrics: Alert volume, top sources, open incidents, MTTD/MTTR. Refresh: last 24 hours."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timerange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 }
+              ]
+            },
+            "label": "Time Range"
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityAlert\n| where TimeGenerated {TimeRange}\n| summarize AlertCount = count() by bin(TimeGenerated, 1h)\n| render timechart",
+        "size": 0,
+        "title": "Alert Volume Over Time",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "linechart",
+        "chartSettings": {
+          "ySettings": { "min": 0 }
+        }
+      },
+      "name": "alert-volume-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityAlert\n| where TimeGenerated {TimeRange}\n| summarize Count = count() by AlertName\n| top 10 by Count desc\n| sort by Count desc",
+        "size": 0,
+        "title": "Top 10 Alert Sources",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Count",
+              "formatter": 4,
+              "formatOptions": { "palette": "blue" }
+            }
+          ]
+        }
+      },
+      "name": "top-alert-sources"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityIncident\n| where TimeGenerated {TimeRange}\n| where Status != 'Closed'\n| summarize Count = count() by Severity\n| sort by Count desc",
+        "size": 0,
+        "title": "Open Incidents by Severity",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart"
+      },
+      "name": "open-incidents-severity"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// MTTD: Mean Time to Detect — time from first alert to incident creation\nSecurityIncident\n| where TimeGenerated {TimeRange}\n| where Status == 'Closed'\n| extend\n    MTTD_Hours = datetime_diff('hour', CreatedTime, FirstActivityTime),\n    MTTR_Hours = datetime_diff('hour', ClosedTime, CreatedTime)\n| summarize\n    Avg_MTTD_Hours = avg(MTTD_Hours),\n    Avg_MTTR_Hours = avg(MTTR_Hours),\n    Incidents_Closed = count()\n| project\n    ['Avg MTTD (hours)'] = round(Avg_MTTD_Hours, 1),\n    ['Avg MTTR (hours)'] = round(Avg_MTTR_Hours, 1),\n    ['Incidents Closed'] = Incidents_Closed",
+        "size": 1,
+        "title": "MTTD / MTTR Metrics",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "mttd-mttr"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityIncident\n| where TimeGenerated {TimeRange}\n| where Status != 'Closed'\n| where Severity in ('High', 'Critical')\n| project TimeGenerated, Title, Severity, Status, Owner=tostring(Owner.assignedTo)\n| sort by TimeGenerated desc\n| take 20",
+        "size": 0,
+        "title": "Open High/Critical Incidents",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Severity",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  { "operator": "==", "thresholdValue": "High", "representation": "2" },
+                  { "operator": "==", "thresholdValue": "Critical", "representation": "4" }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "open-high-incidents"
+    }
+  ],
+  "styleSettings": {},
+  "fromTemplateId": "JSA-SOC-Overview"
+}

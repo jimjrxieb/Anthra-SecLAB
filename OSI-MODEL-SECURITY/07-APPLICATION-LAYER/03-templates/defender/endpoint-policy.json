@@ -1,0 +1,129 @@
+{
+  "metadata": {
+    "description": "Defender for Endpoint baseline policy template",
+    "nistControls": "SI-3 (malicious code protection), SI-4 (monitoring), SC-3 (security function isolation)",
+    "mitreAttack": "Multiple — ASR rules map to specific techniques",
+    "author": "JSA AppSec",
+    "version": "1.0.0",
+    "deploymentNote": "Deploy via Microsoft Intune, Group Policy, or PowerShell Set-MpPreference",
+    "WHY": "Defender out-of-the-box is reactive. This policy makes it proactive: ASR rules stop common attack patterns before execution, cloud protection catches novel threats, and ASR exclusions are kept minimal to avoid bypass opportunities."
+  },
+  "realTimeProtection": {
+    "enabled": true,
+    "nist": "SI-3 malicious code protection",
+    "note": "Never disable — this is the last line of defense"
+  },
+  "cloudDeliveredProtection": {
+    "enabled": true,
+    "level": "High",
+    "nist": "SI-3 — cloud intelligence augments local signatures",
+    "note": "High = faster response to novel threats; may increase false positives slightly"
+  },
+  "automaticSampleSubmission": {
+    "enabled": true,
+    "level": "SendSafeSamples",
+    "note": "Safe samples only — no PII or sensitive file content"
+  },
+  "tamperProtection": {
+    "enabled": true,
+    "nist": "SI-7 software integrity",
+    "note": "Prevents attackers from disabling Defender — critical for post-compromise persistence prevention"
+  },
+  "attackSurfaceReductionRules": {
+    "WHY": "ASR rules are the most impactful Defender feature for blocking initial access and privilege escalation. Each rule targets a specific attacker technique. Audit mode first, then Block after baseline.",
+    "mode": "Block",
+    "rules": [
+      {
+        "id": "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b0",
+        "name": "Block credential stealing from LSASS",
+        "action": "Block",
+        "mitre": "T1003.001 — LSASS Memory",
+        "nist": "IA-5 (authenticator management), SI-3",
+        "why": "Mimikatz and similar tools dump credentials from LSASS. This rule blocks that read. The most impactful single ASR rule."
+      },
+      {
+        "id": "d4f940ab-401b-4efc-aadc-ad5f3c50688a",
+        "name": "Block Office applications from creating child processes",
+        "action": "Block",
+        "mitre": "T1566.001 — Phishing via Office document",
+        "nist": "SI-3, SC-3",
+        "why": "Malicious macros spawn cmd.exe or PowerShell. This stops that execution chain. High impact on phishing attacks."
+      },
+      {
+        "id": "5beb7efe-fd9a-4556-801d-275e5ffc04cc",
+        "name": "Block execution of potentially obfuscated scripts",
+        "action": "Block",
+        "mitre": "T1059.001 — PowerShell obfuscation",
+        "nist": "SI-3",
+        "why": "Attackers obfuscate PowerShell to evade signature detection. This rule targets the obfuscation, not the signatures."
+      },
+      {
+        "id": "b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4",
+        "name": "Block untrusted/unsigned processes from USB",
+        "action": "Block",
+        "mitre": "T1091 — Replication via Removable Media",
+        "nist": "MP-7 (removable media), SI-3",
+        "why": "USB-borne malware — classic air-gap attack vector. Block unsigned executables from removable media."
+      },
+      {
+        "id": "d3e037e1-3eb8-44c8-a917-57927947596d",
+        "name": "Block JavaScript or VBScript from launching downloaded executable content",
+        "action": "Block",
+        "mitre": "T1059.007 — JavaScript execution",
+        "nist": "SI-3, SC-3",
+        "why": "Drive-by download pattern: malicious JS on web page triggers executable download. This breaks that chain."
+      },
+      {
+        "id": "be9ba2d9-53ea-4cdc-84e5-9b1eeee46550",
+        "name": "Block executable content from email client and webmail",
+        "action": "Block",
+        "mitre": "T1566 — Phishing",
+        "nist": "SI-3",
+        "why": "Attachments with executable content (.exe, .vbs, .js) directly from email clients. Blocks most phishing initial access."
+      },
+      {
+        "id": "3b576869-a4ec-4529-8536-b80a7769e899",
+        "name": "Block Office applications from creating executable content",
+        "action": "Block",
+        "mitre": "T1137 — Office Application Startup",
+        "nist": "SI-3, SC-3",
+        "why": "Macros should never write executables to disk. If they do, it's malicious."
+      },
+      {
+        "id": "75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84",
+        "name": "Block Office applications from injecting code into other processes",
+        "action": "Block",
+        "mitre": "T1055 — Process Injection",
+        "nist": "SC-3 (security function isolation)",
+        "why": "Code injection from Office into other processes is an attacker technique, not a legitimate use case."
+      }
+    ]
+  },
+  "exclusions": {
+    "WHY": "Keep exclusions minimal. Every exclusion is a bypass opportunity. Document each one with justification and review annually.",
+    "paths": [],
+    "processes": [],
+    "extensions": [],
+    "note": "Do NOT add broad exclusions like C:\\Users or entire application directories. Add only specific files or processes with documented business justification."
+  },
+  "scheduledScanSettings": {
+    "enabled": true,
+    "scanType": "QuickScan",
+    "scheduleDay": "Everyday",
+    "scheduleTime": "02:00",
+    "nist": "SI-3 — regular scanning ensures detection of latent threats",
+    "note": "Quick scan daily. Full scan weekly during maintenance window."
+  },
+  "powerShellDeployment": {
+    "description": "Apply this policy via PowerShell (run as Administrator)",
+    "commands": [
+      "Set-MpPreference -DisableRealtimeMonitoring $false",
+      "Set-MpPreference -MAPSReporting Advanced",
+      "Set-MpPreference -SubmitSamplesConsent SendSafeSamples",
+      "Set-MpPreference -EnableControlledFolderAccess Enabled",
+      "Set-MpPreference -AttackSurfaceReductionRules_Ids '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b0','d4f940ab-401b-4efc-aadc-ad5f3c50688a','5beb7efe-fd9a-4556-801d-275e5ffc04cc','b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4','d3e037e1-3eb8-44c8-a917-57927947596d' -AttackSurfaceReductionRules_Actions Block,Block,Block,Block,Block",
+      "Update-MpSignature",
+      "Get-MpComputerStatus | Select-Object AMRunningMode,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json"
+    ]
+  }
+}

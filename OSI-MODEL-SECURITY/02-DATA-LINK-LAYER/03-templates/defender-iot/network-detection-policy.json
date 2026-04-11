@@ -1,0 +1,165 @@
+{
+  "_comment": "Microsoft Defender for IoT — Layer 2 Network Detection Policy Template",
+  "_nist_controls": ["SC-7", "AC-3", "AC-4"],
+  "_mitre_techniques": ["T1557.002", "T1200", "T1599"],
+  "_last_updated": "2026-04-10",
+  "_usage": "Import via Defender for IoT portal: Settings > Detection > Custom Alerts > Import Policy. Replace all placeholder values before import.",
+
+  "policy_name": "L2-DataLink-Security-Policy",
+  "policy_version": "1.0",
+  "description": "Layer 2 network detection policy for ARP integrity, unauthorized device, and VLAN hopping detection. Maps to NIST SC-7, AC-3, AC-4.",
+
+  "alert_destinations": [
+    {
+      "type": "sentinel",
+      "enabled": true,
+      "workspace_id": "<SENTINEL_WORKSPACE_ID_PLACEHOLDER>",
+      "shared_key": "<SENTINEL_WORKSPACE_KEY_PLACEHOLDER>",
+      "_comment": "Replace workspace_id and shared_key with your Log Analytics Workspace values from Azure Portal > Log Analytics Workspace > Agents Management"
+    },
+    {
+      "type": "syslog",
+      "enabled": true,
+      "host": "<SYSLOG_HOST_PLACEHOLDER>",
+      "port": 514,
+      "protocol": "UDP",
+      "_comment": "Replace with your syslog/SIEM host. Use TCP (port 6514) for production to ensure delivery."
+    }
+  ],
+
+  "detection_rules": [
+    {
+      "rule_id": "L2-001",
+      "rule_name": "ARP Spoofing Detected",
+      "description": "Detects ARP spoofing (T1557.002 — LLMNR/NBT-NS Poisoning and SMB Relay). Triggered when a MAC address claims an IP address already associated with a different MAC in the device inventory. Indicates man-in-the-middle attack setup at Layer 2.",
+      "enabled": true,
+      "severity": "High",
+      "mitre_technique": "T1557.002",
+      "mitre_tactic": "Credential Access",
+      "nist_control": "SC-7",
+      "nist_description": "SC-7: Boundary Protection — Layer 2 boundary integrity violated by ARP cache poisoning",
+      "detection_logic": {
+        "trigger": "arp_ip_mac_conflict",
+        "conditions": [
+          {
+            "field": "arp.sender_mac",
+            "operator": "not_equals",
+            "compare_to": "known_mac_for_ip",
+            "_comment": "Fires when ARP reply asserts a MAC-IP pair that conflicts with the known inventory"
+          }
+        ],
+        "threshold": {
+          "count": 1,
+          "window_seconds": 60,
+          "_comment": "Alert on first occurrence — ARP spoofing is always high confidence"
+        }
+      },
+      "response_actions": [
+        "alert",
+        "log_to_sentinel",
+        "forward_to_syslog"
+      ],
+      "investigation_notes": "Check arpwatch flip-flop log. Identify both MACs. Locate physical port of unexpected MAC. Isolate if confirmed malicious. See playbooks/04-triage-alerts.md."
+    },
+
+    {
+      "rule_id": "L2-002",
+      "rule_name": "New Unauthorized Device Detected",
+      "description": "Detects a new device connecting to the network that is not in the approved device inventory (T1200 — Hardware Additions). New MAC addresses on the network that were not pre-approved may represent rogue devices, unauthorized workstations, or IoT devices inserted by an insider threat.",
+      "enabled": true,
+      "severity": "Medium",
+      "mitre_technique": "T1200",
+      "mitre_tactic": "Initial Access",
+      "nist_control": "AC-3",
+      "nist_description": "AC-3: Access Enforcement — only authorized devices should have Layer 2 network access",
+      "detection_logic": {
+        "trigger": "new_device_first_seen",
+        "conditions": [
+          {
+            "field": "device.mac_address",
+            "operator": "not_in",
+            "compare_to": "approved_device_inventory",
+            "_comment": "Fires when a MAC is seen for the first time and is not in the allowlist"
+          },
+          {
+            "field": "device.ip_address",
+            "operator": "in_range",
+            "compare_to": "<MONITORED_SUBNET_PLACEHOLDER>",
+            "_comment": "Replace with monitored subnet CIDR e.g. 10.10.0.0/16"
+          }
+        ],
+        "threshold": {
+          "count": 1,
+          "window_seconds": 300,
+          "_comment": "Alert after device is seen 3 times in 5 minutes to reduce false positives from DHCP renewal"
+        }
+      },
+      "response_actions": [
+        "alert",
+        "log_to_sentinel",
+        "forward_to_syslog"
+      ],
+      "investigation_notes": "Look up MAC OUI to identify vendor. Cross-reference with asset management (CMDB). If not authorized, trace to switch port and disable port. Escalate if appears to be deliberate insertion."
+    },
+
+    {
+      "rule_id": "L2-003",
+      "rule_name": "VLAN Hopping Attempt",
+      "description": "Detects VLAN hopping attacks (T1599 — Network Boundary Bridging) via double-tagging or DTP exploitation. An attacker on VLAN 10 can send double-tagged frames to reach VLAN 20 if the native VLAN is VLAN 1 and port security is misconfigured. This represents a critical AC-4 information flow violation.",
+      "enabled": true,
+      "severity": "Critical",
+      "mitre_technique": "T1599",
+      "mitre_tactic": "Defense Evasion",
+      "nist_control": "AC-4",
+      "nist_description": "AC-4: Information Flow Enforcement — VLAN boundaries must prevent unauthorized cross-VLAN traffic",
+      "detection_logic": {
+        "trigger": "vlan_double_tag_detected",
+        "conditions": [
+          {
+            "field": "frame.vlan_tag_count",
+            "operator": "greater_than",
+            "compare_to": 1,
+            "_comment": "Double-tagged frames (802.1q in 802.1q) are the primary indicator of VLAN hopping"
+          }
+        ],
+        "additional_indicators": [
+          {
+            "field": "frame.outer_vlan_id",
+            "operator": "equals",
+            "compare_to": 1,
+            "_comment": "Outer tag of 1 (native VLAN) with inner tag targeting a different VLAN is classic double-tag hopping"
+          },
+          {
+            "field": "dtp.negotiation_attempt",
+            "operator": "equals",
+            "compare_to": true,
+            "_comment": "DTP frames from an access port indicate an attempt to negotiate trunk mode"
+          }
+        ],
+        "threshold": {
+          "count": 1,
+          "window_seconds": 60,
+          "_comment": "Any double-tagged frame is an immediate critical alert — not expected in normal operations"
+        }
+      },
+      "response_actions": [
+        "alert",
+        "log_to_sentinel",
+        "forward_to_syslog",
+        "block_source_mac"
+      ],
+      "investigation_notes": "Immediately identify source MAC and port. Capture frame samples. Disable source port. If DTP is involved, verify all access ports have 'switchport nonegotiate' configured. Review native VLAN settings per 02a-fix-AC3-vlan-segmentation.md."
+    }
+  ],
+
+  "baseline_settings": {
+    "device_learning_period_days": 30,
+    "_comment": "During learning period, new devices are logged but not alerted. After learning period ends, L2-002 fires on unknown MACs.",
+    "arp_table_sync_interval_seconds": 300,
+    "approved_mac_prefixes": [
+      "<OUI_PLACEHOLDER_1>",
+      "<OUI_PLACEHOLDER_2>",
+      "_comment: Add known-good OUI prefixes (first 3 octets) for your hardware vendors e.g. 00:50:56 for VMware"
+    ]
+  }
+}

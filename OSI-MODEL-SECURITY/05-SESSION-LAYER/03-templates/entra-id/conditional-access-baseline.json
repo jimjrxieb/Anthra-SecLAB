@@ -1,0 +1,110 @@
+{
+  "_comment": "Entra ID Conditional Access Baseline Policies",
+  "_nist": "AC-7, AC-17, IA-2, IA-5",
+  "_usage": "These are TEMPLATES. Replace placeholder IDs before applying via Microsoft Graph API.",
+  "_replace": {
+    "BREAK_GLASS_GROUP_ID": "Object ID of break-glass exclusion group",
+    "CORPORATE_NAMED_LOCATION_ID": "ID from namedLocations API after creating your trusted IP range"
+  },
+
+  "policies": [
+    {
+      "_comment": "Policy 1: Require MFA for all users",
+      "_nist": "IA-2 (Identification and Authentication — multi-factor for all access)",
+      "_mitre": "T1078 (Valid Accounts) — MFA defeats credential-based attacks",
+      "_rationale": "Single-factor authentication is insufficient. Microsoft reports 99.9% of compromised accounts lacked MFA. This policy makes MFA mandatory for all cloud app access.",
+      "displayName": "REQUIRE: MFA for All Users",
+      "state": "enabledForReportingButNotEnforced",
+      "conditions": {
+        "users": {
+          "_comment": "Include all users, exclude break-glass accounts to prevent lockout",
+          "includeUsers": ["All"],
+          "excludeGroups": ["BREAK_GLASS_GROUP_ID"]
+        },
+        "applications": {
+          "_comment": "All cloud apps — scope to specific apps if All causes friction initially",
+          "includeApplications": ["All"]
+        },
+        "clientAppTypes": [
+          "_comment: Modern auth clients only — legacy auth is blocked by separate policy",
+          "browser",
+          "mobileAppsAndDesktopClients"
+        ]
+      },
+      "grantControls": {
+        "operator": "OR",
+        "builtInControls": ["mfa"]
+      }
+    },
+
+    {
+      "_comment": "Policy 2: Block legacy authentication protocols",
+      "_nist": "AC-17 (Remote Access — restrict legacy protocols), IA-2 (authentication — block bypass paths)",
+      "_mitre": "T1110.003 (Password Spraying) — legacy auth is the primary spray target because MFA does not apply",
+      "_rationale": "IMAP, SMTP, POP3, and basic HTTP auth do not support MFA challenges. Any org enforcing MFA without blocking legacy auth has a hole attackers exploit routinely. Block legacy auth BEFORE enabling MFA enforcement.",
+      "displayName": "BLOCK: Legacy Authentication Protocols",
+      "state": "enabled",
+      "conditions": {
+        "users": {
+          "includeUsers": ["All"]
+        },
+        "applications": {
+          "includeApplications": ["All"]
+        },
+        "clientAppTypes": [
+          "exchangeActiveSync",
+          "other"
+        ]
+      },
+      "grantControls": {
+        "operator": "OR",
+        "builtInControls": ["block"]
+      }
+    },
+
+    {
+      "_comment": "Policy 3: Sign-in risk — require MFA for medium+ risk sign-ins",
+      "_nist": "IA-5 (Authenticator Management — respond to authenticator compromise indicators)",
+      "_mitre": "T1078.004 (Cloud Accounts) — risk-based MFA catches ATO attempts even with valid credentials",
+      "_rationale": "Microsoft Entra ID Protection assigns risk scores to sign-ins based on threat intelligence (leaked credentials, anonymous IP, impossible travel). Requiring step-up MFA for medium+ risk sign-ins catches account takeover attempts in progress.",
+      "_prerequisite": "Requires Entra ID Premium P2 license for Identity Protection risk-based CA",
+      "displayName": "REQUIRE: MFA for Medium+ Risk Sign-ins",
+      "state": "enabledForReportingButNotEnforced",
+      "conditions": {
+        "users": {
+          "includeUsers": ["All"],
+          "excludeGroups": ["BREAK_GLASS_GROUP_ID"]
+        },
+        "applications": {
+          "includeApplications": ["All"]
+        },
+        "signInRiskLevels": ["medium", "high"]
+      },
+      "grantControls": {
+        "operator": "OR",
+        "builtInControls": ["mfa"]
+      },
+      "sessionControls": {
+        "_comment": "Force sign-in frequency reset on risky sessions — do not allow persistent sessions",
+        "signInFrequency": {
+          "value": 1,
+          "type": "hours",
+          "isEnabled": true
+        },
+        "persistentBrowser": {
+          "mode": "never",
+          "isEnabled": true
+        }
+      }
+    }
+  ],
+
+  "_apply_instructions": [
+    "1. Create break-glass group: az ad group create --display-name CA-Exclusion-BreakGlass --mail-nickname ca-exclusion-breakglass",
+    "2. Get group ID: az ad group show --group CA-Exclusion-BreakGlass --query id -o tsv",
+    "3. Replace BREAK_GLASS_GROUP_ID in this file",
+    "4. Apply Policy 2 (Block Legacy) first — no report-only needed, safe to enable immediately",
+    "5. Apply Policy 1 and 3 in report-only mode — monitor sign-in logs for 1-2 weeks",
+    "6. Move to enabled: az rest --method PATCH --url 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies/<id>' --body '{\"state\": \"enabled\"}'"
+  ]
+}

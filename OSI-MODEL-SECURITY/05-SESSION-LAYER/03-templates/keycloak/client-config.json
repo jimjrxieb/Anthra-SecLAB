@@ -1,0 +1,101 @@
+{
+  "_comment": "Keycloak OIDC Client Configuration Template (hardened)",
+  "_nist": "SC-23 (session authenticity), IA-2 (identification/authentication), AC-12 (session termination)",
+  "_usage": "POST to: KC_URL/admin/realms/REALM/clients",
+  "_replace": {
+    "YOUR-CLIENT-ID": "Your application client ID",
+    "https://your-app.example.com/*": "Your application redirect URI(s)"
+  },
+
+  "clientId": "YOUR-CLIENT-ID",
+  "name": "Your Application",
+  "description": "OIDC client with hardened session settings",
+  "enabled": true,
+  "protocol": "openid-connect",
+
+  "publicClient": false,
+  "_publicClient_why": "WHY: Use confidential client (publicClient=false). Confidential clients authenticate with a client secret. Public clients (SPAs) cannot keep secrets — if you must use public client, require PKCE.",
+
+  "standardFlowEnabled": true,
+  "_standardFlowEnabled_why": "WHY: Authorization Code flow with PKCE. The only secure flow for user-facing applications. Never use implicit flow (deprecated in OAuth 2.1).",
+
+  "implicitFlowEnabled": false,
+  "_implicitFlowEnabled_why": "WHY: Implicit flow is DISABLED. Tokens returned in URL fragments are vulnerable to referrer leakage and browser history exposure (SC-23).",
+
+  "directAccessGrantsEnabled": false,
+  "_directAccessGrantsEnabled_why": "WHY: Resource Owner Password Credentials (ROPC) grant is DISABLED. ROPC bypasses MFA and is the OAuth equivalent of basic auth. Never enable in production.",
+
+  "serviceAccountsEnabled": false,
+  "_serviceAccountsEnabled_why": "WHY: No service account needed for user-facing apps. Only enable for server-to-server flows (client credentials grant).",
+
+  "consentRequired": true,
+  "_consentRequired_why": "WHY: Require user consent for scope grants. Users must acknowledge what data the application accesses. Supports privacy and IA-8 controls for non-org users.",
+
+  "_pkce_comment": "PKCE (Proof Key for Code Exchange) — RFC 7636",
+  "attributes": {
+    "pkce.code.challenge.method": "S256",
+    "_pkce_why": "WHY: PKCE with S256 (SHA-256) prevents authorization code interception attacks. Required for all public clients; recommended for confidential clients too. S256 > plain (plain is vulnerable to MITM).",
+
+    "access.token.lifespan": "300",
+    "_access_token_lifespan_why": "WHY: Access tokens expire in 5 minutes. Short-lived tokens limit blast radius if a token is intercepted or leaked. Client must refresh frequently.",
+
+    "client.session.idle.timeout": "1800",
+    "_client_session_idle_why": "WHY: Client-specific idle timeout of 30 minutes. Overrides realm default for this client. Matches AC-12 session termination requirement.",
+
+    "client.session.max.lifespan": "36000",
+    "_client_session_max_why": "WHY: Maximum 10-hour session for this client. User must re-authenticate after 10 hours regardless of activity.",
+
+    "use.refresh.tokens": "true",
+    "_refresh_tokens_why": "WHY: Enable refresh tokens. Required for maintaining sessions beyond access token lifetime without forcing re-login every 5 minutes.",
+
+    "client.offline.session.idle.timeout": "0",
+    "_offline_session_idle_why": "WHY: Offline sessions disabled. Offline tokens persist indefinitely and cannot be revoked via IdP session termination — avoid unless required.",
+
+    "token.response.type.bearer.lower-case": "true",
+    "tls.client.certificate.bound.access.tokens": "false"
+  },
+
+  "_redirect_comment": "Redirect URI whitelist — SC-23 (prevent open redirect token theft)",
+  "redirectUris": [
+    "https://your-app.example.com/*"
+  ],
+  "_redirectUris_why": "WHY: Explicit redirect URI whitelist. Wildcards at path level only — never wildcard the domain. Open redirect URIs allow attackers to steal authorization codes by redirecting to attacker-controlled domains.",
+
+  "webOrigins": [
+    "https://your-app.example.com"
+  ],
+  "_webOrigins_why": "WHY: CORS allowed origins explicitly listed. Prevents cross-origin token requests from attacker domains. Never use '+' (all allowed redirect URIs) in production.",
+
+  "notBefore": 0,
+  "bearerOnly": false,
+
+  "defaultClientScopes": [
+    "openid",
+    "email",
+    "profile"
+  ],
+  "_defaultClientScopes_why": "WHY: Minimal scopes. Do not include scopes application does not use. Principle of least privilege applied to OAuth scope.",
+
+  "optionalClientScopes": [],
+  "_optionalClientScopes_why": "WHY: No optional scopes by default. Add only what is required per application.",
+
+  "fullScopeAllowed": false,
+  "_fullScopeAllowed_why": "WHY: Full scope DISABLED. Prevents token from including all realm roles. Token should only contain roles relevant to this client.",
+
+  "_token_comment": "Token settings — SC-23 (session authenticity via signed tokens)",
+  "protocolMappers": [
+    {
+      "name": "jti-mapper",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-hardcoded-claim-mapper",
+      "consentRequired": false,
+      "config": {
+        "claim.name": "jti",
+        "claim.value": "${uuid}",
+        "access.token.claim": "true",
+        "id.token.claim": "false"
+      },
+      "_why": "WHY: JTI (JWT ID) claim enables per-token revocation tracking. Without JTI, you cannot revoke individual tokens, only expire by time. Required for NIST AC-12 session termination."
+    }
+  ]
+}

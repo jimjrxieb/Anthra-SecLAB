@@ -1,0 +1,161 @@
+# clusterissuer.yaml — cert-manager ClusterIssuer templates
+# NIST: IA-5 (authenticator management), SC-23 (session authenticity)
+# WHY ClusterIssuer vs Issuer: ClusterIssuer is cluster-scoped — one issuer
+# can serve all namespaces. Use Issuer if you need per-namespace CA isolation.
+#
+# This file contains templates for:
+#   1. Let's Encrypt (production and staging)
+#   2. Internal CA (for cluster-internal mTLS)
+#   3. Self-signed bootstrap (for internal CA initialization)
+---
+# ─── 1. Let's Encrypt Production ──────────────────────────────────────────
+# WHY SC-23: Let's Encrypt provides publicly-trusted TLS certificates via ACME.
+# Domain validation proves you control the domain before issuing.
+# 90-day certs force rotation — reduces exposure window per IA-5.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  annotations:
+    security.linkops.io/nist-control: "IA-5,SC-23"
+    security.linkops.io/purpose: "Public TLS certificates for ingress endpoints"
+spec:
+  acme:
+    # WHY: Use staging for testing — avoids Let's Encrypt production rate limits.
+    # Switch to https://acme-v02.api.letsencrypt.org/directory for production.
+    server: https://acme-v02.api.letsencrypt.org/directory
+
+    # WHY IA-5: Email for expiry notifications — backup alert if auto-renewal fails.
+    # cert-manager handles renewal at renewBefore, but this catches cert-manager failures.
+    email: security-alerts@your-domain.com   # CHANGE THIS
+
+    # WHY: ACME requires a private key to sign certificate requests.
+    # cert-manager creates this secret automatically on first run.
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+
+    solvers:
+      # ── HTTP-01 Challenge (simplest — requires port 80 accessible) ─────
+      # WHY: HTTP-01 is easiest for single-domain certs with public ingress.
+      # cert-manager deploys a temporary pod to respond to ACME challenges.
+      - http01:
+          ingress:
+            class: nginx   # CHANGE to your ingress class (nginx, traefik, etc.)
+
+      # ── DNS-01 Challenge (for wildcard certs and private clusters) ─────
+      # WHY: DNS-01 is required for wildcard certs and works without port 80.
+      # Needed for *.your-domain.com certs or clusters without public ingress.
+      # - dns01:
+      #     route53:
+      #       region: us-east-1
+      #       hostedZoneID: Z1234567890   # CHANGE: your Route53 zone ID
+      #       accessKeyIDSecretRef:
+      #         name: route53-credentials
+      #         key: access-key-id
+      #       secretAccessKeySecretRef:
+      #         name: route53-credentials
+      #         key: secret-access-key
+
+---
+# ─── 2. Let's Encrypt Staging ────────────────────────────────────────────
+# WHY IA-5: Use staging to test certificate issuance without hitting rate limits.
+# Staging certs are not trusted by browsers — switch to prod once validated.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  annotations:
+    security.linkops.io/nist-control: "IA-5"
+    security.linkops.io/purpose: "Test cert issuance — not browser-trusted"
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: security-alerts@your-domain.com   # CHANGE THIS
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+
+---
+# ─── 3. Internal CA Issuer ───────────────────────────────────────────────
+# WHY SC-23 (mTLS): Internal CA issues certs for service-to-service mTLS.
+# These certs are not publicly trusted — only trusted within the cluster.
+# Use this for: Kubernetes service certs, internal API mTLS, Istio custom CA.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+  annotations:
+    security.linkops.io/nist-control: "IA-5,SC-23"
+    security.linkops.io/purpose: "Internal CA for mTLS service certificates"
+spec:
+  ca:
+    # WHY: The CA secret must exist before this issuer can function.
+    # Create it from the self-signed bootstrap below, or from your PKI.
+    # kubectl create secret tls internal-ca-keypair \
+    #   --cert=ca.crt --key=ca.key -n cert-manager
+    secretName: internal-ca-keypair
+
+---
+# ─── 4. Self-Signed Bootstrap ─────────────────────────────────────────────
+# WHY: Required to create the root CA certificate that internal-ca uses.
+# Self-signed is acceptable for the root CA in a cluster PKI.
+# Chain: SelfSigned ClusterIssuer → CA Certificate → internal-ca ClusterIssuer → Service Certs
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+  annotations:
+    security.linkops.io/purpose: "Bootstrap only — used once to create internal CA cert"
+spec:
+  selfSigned: {}
+
+---
+# ─── Bootstrap CA Certificate ─────────────────────────────────────────────
+# WHY IA-5: Creates the root CA certificate signed by the self-signed bootstrap issuer.
+# This cert becomes the trust anchor for all internal service certificates.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca-cert
+  namespace: cert-manager
+  annotations:
+    security.linkops.io/nist-control: "IA-5,SC-23"
+spec:
+  # WHY: CA cert must be stored in cert-manager namespace for ClusterIssuer to read it.
+  secretName: internal-ca-keypair
+  isCA: true   # WHY: isCA=true sets basicConstraints CA:TRUE and includes keyCertSign usage
+
+  # WHY SC-13: 10 year CA validity — root CAs should outlive the certs they sign.
+  # Service certs are short-lived (90 days). CA cert rotation is a planned event.
+  duration: 87600h   # 10 years
+  renewBefore: 720h  # 30 days before expiry
+
+  subject:
+    organizations:
+      - "SecLAB Internal PKI"   # CHANGE to your org
+  commonName: "SecLAB Internal CA"
+
+  privateKey:
+    algorithm: ECDSA
+    size: 256   # WHY SC-13: ECDSA P-256 — equivalent security to RSA 3072, smaller key
+
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+---
+# ─── Deployment Order ─────────────────────────────────────────────────────
+# 1. Apply selfsigned-bootstrap ClusterIssuer
+# 2. Apply internal-ca-cert Certificate (bootstraps the CA)
+# 3. Apply internal-ca ClusterIssuer (now has a CA secret to reference)
+# 4. Apply letsencrypt-prod/staging ClusterIssuers
+# 5. Create Certificate resources referencing desired issuer
+#
+# Verify:
+#   kubectl get clusterissuers                    — check READY=True
+#   kubectl describe clusterissuer internal-ca    — check conditions
+#   kubectl get certificates --all-namespaces     — check issued certs

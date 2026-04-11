@@ -1,0 +1,164 @@
+# certificate.yaml — cert-manager Certificate resource templates
+# NIST: IA-5 (authenticator management), SC-23 (session authenticity)
+# WHY: Declarative certificate lifecycle — cert-manager handles issuance and renewal automatically.
+# The Certificate resource is the desired state; cert-manager reconciles to it continuously.
+---
+# ─── 1. Standard HTTPS Certificate (Let's Encrypt) ──────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: app-tls-cert
+  namespace: production   # CHANGE to your namespace
+  annotations:
+    security.linkops.io/nist-control: "IA-5,SC-23"
+    security.linkops.io/purpose: "HTTPS certificate for external-facing ingress"
+spec:
+  # WHY IA-5: secretName is where cert-manager writes the TLS secret.
+  # Ingress and pods reference this secret for TLS termination.
+  # Name format recommendation: <app>-tls to make purpose obvious.
+  secretName: app-tls-secret
+
+  # WHY SC-23: 90 days is the Let's Encrypt maximum and NIST recommendation for
+  # short-lived credentials. Short duration limits the window of exposure if the
+  # private key is compromised — IA-5 authenticator management principle.
+  duration: 2160h   # 90 days (90 * 24 = 2160 hours)
+
+  # WHY IA-5: Renew 30 days before expiry. This provides a 30-day window for
+  # retry if the first renewal attempt fails (network issues, rate limits, etc.).
+  # cert-manager will retry every few hours until renewal succeeds.
+  # Rule of thumb: renewBefore = ~1/3 of duration.
+  renewBefore: 720h   # 30 days
+
+  # WHY SC-13: ECDSA P-256 is preferred over RSA for new certificates.
+  # Smaller key, faster handshake, equivalent security to RSA 3072+.
+  # Use RSA if you need compatibility with legacy clients (Java < 7, old Android).
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # WHY IA-5: Rotate private key on each renewal — eliminates key reuse across
+    # certificate lifetimes. If the old key was compromised, new cert is clean.
+    rotationPolicy: Always
+
+  # WHY: Subject Alternative Names (SANs) are what modern clients validate.
+  # Common Name is deprecated for host validation per RFC 2818.
+  # Add every hostname that clients will use — wildcard or explicit.
+  dnsNames:
+    - app.your-domain.com          # CHANGE
+    - www.app.your-domain.com      # CHANGE — add all variants
+
+  # WHY IA-5: issuerRef points to the ClusterIssuer that signs this cert.
+  # Using ClusterIssuer (not Issuer) allows cross-namespace cert management.
+  issuerRef:
+    name: letsencrypt-prod   # Use letsencrypt-staging for testing
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+  # WHY SC-23: usages restricts what this certificate can be used for.
+  # serverAuth = TLS server. Add clientAuth if this cert is also used for mTLS client auth.
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+
+---
+# ─── 2. Internal mTLS Certificate ────────────────────────────────────────
+# WHY SC-23: For service-to-service mTLS inside the cluster.
+# Internal certs are shorter-lived — 30 days forces frequent rotation.
+# Auto-renewal means zero operational cost for short-lived internal certs.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: service-mtls-cert
+  namespace: production   # CHANGE
+  annotations:
+    security.linkops.io/nist-control: "IA-5,SC-23"
+    security.linkops.io/purpose: "mTLS client+server certificate for internal service communication"
+spec:
+  secretName: service-mtls-secret
+
+  # WHY IA-5: 30-day internal certs — aggressive rotation for internal PKI.
+  # cert-manager makes this operationally free; short lifetime limits blast radius.
+  duration: 720h   # 30 days
+
+  # WHY: renewBefore = 1/3 of duration. Gives 10 days of retry window.
+  renewBefore: 240h   # 10 days
+
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+
+  # WHY SC-23: DNS SAN must match the Kubernetes service DNS name.
+  # Format: <service-name>.<namespace>.svc.cluster.local
+  dnsNames:
+    - my-service.production.svc.cluster.local   # CHANGE
+    - my-service.production.svc                 # Short form
+    - my-service                                # Within-namespace short form
+
+  issuerRef:
+    name: internal-ca   # Use internal CA for cluster-internal certs
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+  # WHY SC-23: Both serverAuth AND clientAuth for mutual TLS.
+  # serverAuth: this service proves its identity to callers.
+  # clientAuth: this service authenticates to services it calls.
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth   # Required for mTLS client authentication
+
+---
+# ─── 3. Wildcard Certificate (DNS-01) ────────────────────────────────────
+# WHY: Wildcard covers all subdomains — useful for dev/staging environments
+# or when you have many subdomains. Requires DNS-01 challenge (not HTTP-01).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-tls-cert
+  namespace: production   # CHANGE
+  annotations:
+    security.linkops.io/purpose: "Wildcard cert — requires DNS-01 issuer"
+spec:
+  secretName: wildcard-tls-secret
+  duration: 2160h    # 90 days
+  renewBefore: 720h  # 30 days
+
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+
+  dnsNames:
+    - "*.your-domain.com"   # CHANGE — wildcard SAN
+    - "your-domain.com"     # CHANGE — apex domain (separate entry required)
+
+  issuerRef:
+    # WHY: Wildcard certs REQUIRE DNS-01 challenge — must use a DNS-01 capable issuer.
+    # The letsencrypt-prod issuer above must have a dns01 solver configured.
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+
+---
+# ─── Verification ─────────────────────────────────────────────────────────
+# kubectl get certificate -n production               — check READY=True
+# kubectl describe certificate app-tls-cert -n prod   — see conditions/events
+# kubectl get secret app-tls-secret -n prod           — confirm tls.crt and tls.key exist
+# kubectl get certificaterequest -n prod              — see ACME challenge status
+#
+# ─── Ingress annotation to use this certificate ───────────────────────────
+# metadata:
+#   annotations:
+#     cert-manager.io/cluster-issuer: letsencrypt-prod
+# spec:
+#   tls:
+#     - secretName: app-tls-secret
+#       hosts:
+#         - app.your-domain.com

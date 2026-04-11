@@ -1,0 +1,171 @@
+# read-only-clusterrole.yaml — Auditor ClusterRole (no secrets, no exec, no port-forward)
+# NIST: AC-6 (Least Privilege), AC-2 (Account Management)
+# Usage: kubectl apply -f read-only-clusterrole.yaml
+# Purpose: Grant read-only cluster-wide visibility for security auditors
+#          WITHOUT access to sensitive resources.
+
+# WHY: Auditors need cluster-wide visibility to assess posture. The built-in
+# 'view' ClusterRole excludes too much (no RBAC visibility). cluster-admin
+# is too much (Secrets, exec access). This ClusterRole is the right-sized
+# middle ground for security auditors.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-auditor
+  labels:
+    nist-control: AC-6
+    managed-by: seclab-l5
+  annotations:
+    nist-control: "AC-6 — Least Privilege"
+    purpose: "Read-only cluster access for security auditors — no secrets, no exec"
+    review-date: "Review quarterly — ensure no sensitive resources added to rules"
+rules:
+  # ─── Core resources (read-only, no Secrets) ────────────────────────────
+  # WHY: Pods, services, namespaces needed for workload inventory.
+  # No secrets — auditors audit policy, not read secret VALUES.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - endpoints
+      - events
+      - namespaces
+      - nodes
+      - persistentvolumeclaims
+      - persistentvolumes
+      - pods
+      - replicationcontrollers
+      - resourcequotas
+      - serviceaccounts
+      - services
+    verbs: ["get", "list", "watch"]
+
+  # WHY: Pod logs are needed for security event review, but NOT exec or attach.
+  # Exec/attach allows running commands inside containers — that is not auditing.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  # WHY: Explicitly DENY exec, attach, port-forward at ClusterRole level.
+  # These are privileged operations that bypass network controls.
+  # Note: K8s RBAC cannot explicitly deny — absence = deny. These are documented
+  # to make the intent clear for auditors reviewing this role.
+  # EXCLUDED (not listed = no access):
+  #   - pods/exec
+  #   - pods/attach
+  #   - pods/portforward
+
+  # ─── Workload controllers ──────────────────────────────────────────────
+  # WHY: Deployment/DaemonSet/StatefulSet inventory for workload analysis.
+  - apiGroups: ["apps"]
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+
+  # ─── Batch workloads ─────────────────────────────────────────────────
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+
+  # ─── RBAC resources ───────────────────────────────────────────────────
+  # WHY: RBAC visibility is ESSENTIAL for security auditors. Without it,
+  # auditors cannot review who has access to what — which is 80% of the audit.
+  # Read-only RBAC access does NOT grant the permissions in those roles.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - clusterroles
+      - clusterrolebindings
+      - roles
+      - rolebindings
+    verbs: ["get", "list", "watch"]
+
+  # ─── Policy resources ─────────────────────────────────────────────────
+  # WHY: Auditors need to review admission policies (Kyverno, OPA, PSA) to
+  # assess what workload constraints are enforced.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["kyverno.io"]
+    resources:
+      - clusterpolicies
+      - policies
+      - clusterreportchangerequests
+      - reportchangerequests
+    verbs: ["get", "list", "watch"]
+
+  # ─── Networking ───────────────────────────────────────────────────────
+  # WHY: Network policy review is critical — auditors must validate that
+  # network segmentation controls are in place (AC-4, SC-7).
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - ingressclasses
+      - networkpolicies
+    verbs: ["get", "list", "watch"]
+
+  # ─── Storage ──────────────────────────────────────────────────────────
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs: ["get", "list", "watch"]
+
+  # ─── Autoscaling ─────────────────────────────────────────────────────
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  # ─── Node/cluster metrics ─────────────────────────────────────────────
+  # WHY: Resource usage metrics help auditors identify anomalous workloads.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+
+  # ─── CRDs (discovery) ─────────────────────────────────────────────────
+  # WHY: CRD listing allows auditors to discover what custom controllers
+  # are installed. Does not grant access to CRD instances.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+
+  # ─── Admission webhooks ───────────────────────────────────────────────
+  # WHY: Webhook review is part of admission control audit (AC-6, SC-7).
+  # Auditors need to see what admission webhooks are configured.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources:
+      - mutatingwebhookconfigurations
+      - validatingwebhookconfigurations
+    verbs: ["get", "list", "watch"]
+
+  # ─── Falco / security events (if present) ────────────────────────────
+  - apiGroups: ["falco.security.falco.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding: bind auditor role to auditor group
+# WHY: Group-based binding allows adding/removing auditors via group membership
+# without modifying RBAC. Audit the group membership, not the binding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-auditor-binding
+  labels:
+    nist-control: AC-6
+    managed-by: seclab-l5
+  annotations:
+    nist-control: "AC-6 — Least Privilege"
+    purpose: "Bind security-auditor group to read-only ClusterRole"
+subjects:
+  # WHY: Bind to a group, not individual users. Manage membership via IdP (Entra ID,
+  # Keycloak) group sync. Adding/removing auditors = group membership change only.
+  - kind: Group
+    name: security-auditors  # Map to your IdP group name
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: security-auditor
+  apiGroup: rbac.authorization.k8s.io

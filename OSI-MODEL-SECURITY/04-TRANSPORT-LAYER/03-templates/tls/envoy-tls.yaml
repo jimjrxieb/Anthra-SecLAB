@@ -1,0 +1,146 @@
+# envoy-tls.yaml — Envoy proxy TLS and mTLS configuration templates
+# NIST: SC-8 (transmission confidentiality), SC-13 (cryptographic protection), SC-23 (session authenticity)
+# Used in: Istio service mesh, standalone Envoy deployments, Contour ingress
+#
+# This file contains two resources:
+#   1. DownstreamTlsContext — TLS for inbound connections (server role)
+#   2. UpstreamTlsContext — TLS for outbound connections (client role)
+#   3. Combined mTLS configuration for service-to-service
+---
+# ─── 1. Listener with TLS Termination ──────────────────────────────────────
+# WHY SC-8: TLS terminates encrypted traffic at the proxy layer.
+# Clients connect using TLS 1.2+ — plaintext never traverses the network.
+static_resources:
+  listeners:
+    - name: listener_tls
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 443
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+
+              # WHY SC-23: Require TLS 1.2 minimum. TLS 1.3 negotiated when both sides support it.
+              common_tls_context:
+                tls_minimum_protocol_version: TLSv1_2
+                tls_maximum_protocol_version: TLSv1_3
+
+                # WHY SC-13: Restrict to ECDHE+AESGCM cipher suites only.
+                # Envoy uses BoringSSL cipher names (slightly different from OpenSSL).
+                tls_params:
+                  cipher_suites:
+                    - "[ECDHE-ECDSA-AES128-GCM-SHA256|ECDHE-RSA-AES128-GCM-SHA256]"
+                    - "[ECDHE-ECDSA-AES256-GCM-SHA384|ECDHE-RSA-AES256-GCM-SHA384]"
+                    - "[ECDHE-ECDSA-CHACHA20-POLY1305|ECDHE-RSA-CHACHA20-POLY1305]"
+
+                # WHY: TLS certificate from Kubernetes secret or SDS (secret discovery service).
+                # cert-manager populates the secret; Envoy/Istio reads via SDS for zero-downtime rotation.
+                tls_certificates:
+                  - certificate_chain:
+                      filename: /etc/certs/tls.crt   # cert-manager secret mount path
+                    private_key:
+                      filename: /etc/certs/tls.key
+
+                # WHY SC-13: Validate certificate chain against trusted CA.
+                # Without this, any certificate passes — mTLS becomes meaningless.
+                validation_context:
+                  trusted_ca:
+                    filename: /etc/certs/ca.crt
+
+              # WHY SC-23 (mTLS): Require client certificate for mutual authentication.
+              # REQUIRE_AND_VERIFY = reject connections without valid client cert.
+              # Use OPTIONAL_AND_VERIFY to allow both mTLS and TLS (transition period).
+              require_client_certificate: true   # Set false for one-way TLS only
+
+---
+# ─── 2. Cluster with TLS Origination ───────────────────────────────────────
+# WHY SC-8: When Envoy connects to upstream services, it must use TLS.
+# Plaintext upstream defeats the purpose of TLS termination.
+  clusters:
+    - name: upstream_tls_cluster
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+
+          common_tls_context:
+            tls_minimum_protocol_version: TLSv1_2
+            tls_maximum_protocol_version: TLSv1_3
+
+            tls_params:
+              cipher_suites:
+                - "[ECDHE-ECDSA-AES128-GCM-SHA256|ECDHE-RSA-AES128-GCM-SHA256]"
+                - "[ECDHE-ECDSA-AES256-GCM-SHA384|ECDHE-RSA-AES256-GCM-SHA384]"
+
+            # WHY SC-23: Client cert for mTLS — Envoy authenticates itself to upstream.
+            # In Istio this is auto-managed via SPIFFE/X.509 SVIDs.
+            tls_certificates:
+              - certificate_chain:
+                  filename: /etc/certs/client.crt
+                private_key:
+                  filename: /etc/certs/client.key
+
+            # WHY SC-13: Validate upstream certificate — prevents MITM.
+            validation_context:
+              trusted_ca:
+                filename: /etc/certs/ca.crt
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher:
+                    exact: "upstream-service.namespace.svc.cluster.local"
+
+---
+# ─── 3. Istio PeerAuthentication — STRICT mTLS ──────────────────────────────
+# WHY SC-8: Istio PeerAuthentication enforces mTLS at the mesh level.
+# STRICT mode rejects ALL plaintext traffic between services — no exceptions.
+# Without this, PERMISSIVE mode allows plaintext as fallback (SC-8 gap).
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system   # WHY: mesh-wide policy — applies to all namespaces
+  annotations:
+    # Security evidence annotation for audit trail
+    security.linkops.io/nist-control: "SC-8,SC-23"
+    security.linkops.io/rationale: "STRICT mTLS enforces mutual authentication for all east-west traffic"
+spec:
+  mtls:
+    # WHY SC-23: STRICT requires valid client certificate on every service-to-service call.
+    # Services without sidecars cannot communicate — forces sidecar adoption.
+    # PERMISSIVE allows plaintext — only use during migration, never in production.
+    mode: STRICT
+
+---
+# ─── 4. Istio DestinationRule — TLS version enforcement ─────────────────────
+# WHY SC-13: PeerAuthentication sets STRICT mode but does not specify TLS version.
+# DestinationRule controls the client-side TLS settings for outbound traffic.
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: enforce-tls-version
+  namespace: istio-system
+spec:
+  host: "*.local"   # WHY: Apply to all cluster-internal services
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL   # Use Istio-managed mTLS certs (SPIFFE)
+      # For custom TLS settings, use MUTUAL with explicit cert paths
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: UPGRADE   # WHY: HTTP/2 reduces TLS handshake overhead
+
+---
+# ─── Verification commands ───────────────────────────────────────────────────
+# After deploying:
+#   istioctl analyze                        — validate mesh config
+#   istioctl x describe pod <pod>           — verify mTLS for specific pod
+#   kubectl exec -it <pod> -- curl http://service  — test (should work via sidecar)
+#   kubectl exec -it <pod> -- curl --insecure https://service — test direct (should fail with STRICT)
