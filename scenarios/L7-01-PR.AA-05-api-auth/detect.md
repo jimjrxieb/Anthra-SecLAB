@@ -5,9 +5,28 @@
 **CIS v8:** 3.3
 **NIST 800-53:** AC-3
 
-You have received an alert or tip that the Portfolio API may be exposing its
-documentation endpoints without authentication. Follow these steps to confirm
-the finding and gather evidence before escalating or remediating.
+---
+
+## How You Got Here
+
+This finding comes from one of two places:
+
+**Path A — Your Day 1 baseline checklist caught it.**
+During your baseline assessment (00-DAY1-BASELINE, checklist section 3), you ran
+configuration checks against the Portfolio API and found `/docs` returning HTTP 200.
+This is not an alert — it is a finding from proactive configuration auditing.
+
+**Path B — A scheduled configuration scan flagged it.**
+A tool like OWASP ZAP, Nuclei, or a custom endpoint audit script detected that
+the API documentation endpoint is accessible without authentication. The scan
+output listed `/docs` and `/openapi.json` as informational findings.
+
+Not every security issue triggers a SIEM alert. Configuration gaps — especially
+default settings that were never hardened — are found by running your tools
+correctly and verifying the results, not by waiting for an attacker to find them
+first.
+
+Your job now: confirm the finding, gather evidence, and determine severity.
 
 ---
 

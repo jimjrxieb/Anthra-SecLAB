@@ -5,9 +5,31 @@
 **CIS v8:** 3.14
 **NIST 800-53:** SI-7
 
-Someone has flagged a concern: the Portfolio API container uses
-`readOnlyRootFilesystem: true`, but the `/tmp` mount is writable by design.
-Is there any monitoring on what gets written there? Your job is to check.
+## How You Got Here
+
+`readOnlyRootFilesystem: true` is a PROTECT control. It stops writes to the root
+filesystem. FIM — File Integrity Monitoring via Falco rules — is a DETECT control.
+It alerts when writes happen to sensitive paths. You verified one. You did not
+verify the other. That is the gap.
+
+**Path A — Security review of a running container:** During a security review,
+you exec'd into the Portfolio API pod and checked `/tmp`. You found files there
+that should not exist — or you simply noticed that a writable mount exists with no
+monitoring coverage. You then checked Falco logs for any alert on `/tmp` writes
+in the `anthra` namespace and found nothing. The write happened. Falco did not
+see it.
+
+**Path B — Baseline Falco rule coverage check:** Your Day 1 baseline included
+reviewing the active Falco rules for coverage of writable container paths. You
+checked for rules covering `/tmp` writes scoped to the `anthra` namespace or the
+`portfolio-app-api` container, and found none in the default ruleset. The gap was
+logged as a detection coverage finding at assessment time.
+
+Either way: this is not a `readOnlyRootFilesystem` problem — that control is
+working. The problem is that the writable `/tmp` mount has no detection coverage.
+Anything written there is invisible to your security tooling. Your job in this
+phase is to confirm the gap, document what Falco should be detecting but is not,
+and gather evidence before proceeding to investigate.md.
 
 ---
 

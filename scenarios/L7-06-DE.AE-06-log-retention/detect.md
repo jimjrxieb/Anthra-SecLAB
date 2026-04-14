@@ -1,15 +1,27 @@
 # L7-06 — DE.AE-06: Detect Phase
 
-## L1 Analyst Task: Identify the Log Retention Gap
+## How You Got Here
 
-You are a Level 1 analyst. An incident was reported this morning. The suspicious
-activity occurred 48 hours ago. You need to pull logs from that window to start
-your investigation. Your job in this phase is to discover that the logs no longer
-exist — and to understand why.
+Log retention gaps are found by testing your tools — querying for old data and
+verifying it actually exists. You do not get an alert when logs expire. You find
+out when you need them and they are gone.
 
-This is not about finding an attacker. This is about finding the gap where an
-attacker would be invisible because the evidence was rotated away before anyone
-looked.
+**Path A — Active investigation revealed the gap (most realistic):** An incident
+was reported. The suspicious activity occurred 48 hours ago. You opened Splunk or
+Grafana Explore, set the time range to `now-48h`, queried for `{namespace="anthra"}`,
+and got nothing back. Logs from that window no longer exist. You are now working
+backwards to understand why.
+
+**Path B — Baseline checklist caught it proactively:** Your Day 1 baseline
+included checking the Loki or Fluent Bit retention configuration. You found the
+`retention_period` or `max_age` setting was set below 90 days — the minimum your
+compliance framework requires. You flagged it before an incident proved the gap.
+
+Either way: this is not about finding an attacker. It is about finding the gap
+where an attacker would be invisible — because the evidence was rotated away
+before anyone looked. Your job in this phase is to confirm the gap, measure how
+far back logs actually go, and document the delta against the required retention
+window.
 
 ---
 

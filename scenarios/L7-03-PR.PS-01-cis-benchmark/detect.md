@@ -1,10 +1,23 @@
 # L7-03 — Detect: Reading CIS Benchmark Output
 
-## What You Are Looking For
+## How You Got Here
 
-You are a Level 1 analyst. The cluster has been running for some time and nobody
-has run a formal CIS audit. Your job is to run two tools, understand what they
-report, and identify which findings are real risks versus noise.
+CIS benchmark failures are found by running the benchmark — not by waiting for
+alerts. This IS the configuration tool doing its job.
+
+**Path A — Day 1 Baseline (most likely):** Your baseline checklist included
+running kube-bench and kubescape against the cluster. The FAIL findings in the
+output are the detection. You did not receive a ticket or alert — you generated
+the evidence yourself by running the tools as documented in `00-DAY1-BASELINE`.
+
+**Path B — Scheduled Compliance Scan:** A scheduled kube-bench or kubescape run
+is part of the ongoing compliance cycle. The report landed in Slack or a shared
+findings directory, and you are triaging the FAIL count — which is non-zero.
+
+Either way: no SIEM fired. No alert woke you up. A configuration audit tool ran
+against the cluster, compared its state to the CIS Kubernetes Benchmark, and
+produced a list of gaps. Your job is to read that output, understand what it
+means, and separate real risks from noise before proceeding to investigate.md.
 
 ---
 

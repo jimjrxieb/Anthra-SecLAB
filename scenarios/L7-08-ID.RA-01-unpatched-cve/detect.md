@@ -6,14 +6,30 @@
 
 ---
 
-## Context
+## How You Got Here
 
-You have been told that a change was made to the Portfolio API deployment in the
-`anthra` namespace. You do not know what changed. Your job is to find out what is
-running and whether it is safe to run.
+This is your vulnerability management tooling doing its job. CVSS score and EPSS
+probability tell you urgency. Your job is to read the output and act on it.
 
-This is a realistic starting point. You rarely know exactly what is wrong when you
-sit down. You start with observation.
+**Path A — CI pipeline blocked (most common in a mature pipeline):** A scheduled
+Trivy image scan ran as part of the CI/CD pipeline against the Portfolio API
+image. It flagged one or more CRITICAL CVEs. The pipeline sent an alert or filed
+a ticket. You are now working that finding.
+
+**Path B — Day 1 Baseline scan:** Your baseline included running `trivy image`
+against all images in the `anthra` namespace. The CRITICAL count was non-zero.
+You recorded it as a finding during the initial assessment and are now working it
+as a formal remediation task.
+
+**Path C — Assessment cycle scan:** A vulnerability management scan (Trivy,
+Grype) ran as part of your regular assessment cadence. The report shows a
+CRITICAL finding against the API image that was not present in the previous scan.
+A dependency update or new CVE disclosure surfaced it.
+
+Either way: you were not paged by a runtime alert. A vulnerability scanner
+examined the image and found a known CVE in a package the image carries. Your job
+now is to confirm what is running, understand the severity, check whether the pod
+is healthy, and determine urgency before proceeding to investigate.md.
 
 ---
 

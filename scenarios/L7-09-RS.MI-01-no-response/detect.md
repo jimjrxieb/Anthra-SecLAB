@@ -6,17 +6,28 @@
 
 ---
 
-## Context
+## How You Got Here
 
-You are a Level 1 analyst. You have not been paged. You are reading this scenario,
-which means you are doing it as training — not because an alert woke you up.
+Detection fired. Notification did not. The gap is in the routing, not the
+detection — and that is exactly why you need to trace the full path.
 
-That is the point. In production, if Falcosidekick has no output configured, nobody
-reads this scenario at 2am. Nobody knows the alert fired. The attacker finishes and
-leaves before anyone learns the container was exec'd into.
+**Path A — You noticed no alert arrived:** You exec'd into a pod (or were
+reviewing access logs and saw someone else exec), then checked Splunk and
+AlertManager. No alert arrived, even though the action should have triggered
+Falco's `Terminal shell in container` rule. You went looking for the alert in
+Falco logs directly and found it there — logged, but never routed anywhere.
 
-Your job in this phase is to reconstruct what happened, confirm the alert exists,
-and determine where it was (or was not) routed.
+**Path B — Day 1 checklist flagged the gap proactively:** Your baseline checklist
+included verifying Falcosidekick outputs. You checked the Falcosidekick
+configuration and found it either unconfigured (no outputs defined) or failing
+silently (misconfigured Slack webhook, unreachable Splunk HEC endpoint). You
+flagged it before an actual event proved the gap.
+
+Either way: Falco detected the event. You can verify this by reading Falco logs
+directly. The problem is that the alert never reached a human — because the
+routing layer (Falcosidekick outputs) was not configured or was broken. Your job
+in this phase is to confirm the detection exists in Falco logs, trace where it
+was supposed to go, and identify exactly where the chain broke.
 
 ---
 

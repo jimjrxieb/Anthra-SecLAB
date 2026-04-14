@@ -1,13 +1,28 @@
 # L7-07 — DE.AE-07: Detect Phase
 
-## L1 Analyst Task: Identify the Missing Log Source
+## How You Got Here
 
-You are a Level 1 analyst. The monitoring dashboard shows log activity. The Fluent Bit
-graphs look mostly normal. But one node has been silent for the last 20 minutes, and
-nobody has noticed.
+Partial log collection failures are harder to spot than total outages. When all
+Fluent Bit pods die, the dashboards go silent and someone notices. When one pod
+fails on one node, the overall graph still shows activity and looks mostly normal.
+Your monitoring must compare DaemonSet desired vs ready — not just check for
+non-zero log volume.
 
-Your job in this phase is to find the gap. Not by reading log content — but by
-verifying that all expected log sources are reporting. Absence is a signal.
+**Path A — Grafana log volume dashboard:** You were reviewing the per-node log
+volume dashboard and noticed one node's line dropped to zero approximately 20
+minutes ago. Every other node is still reporting. The overall cluster log volume
+looks slightly low but not obviously broken. Without per-node breakdown, this
+would be invisible.
+
+**Path B — kubectl DaemonSet check:** You ran `kubectl get pods -n logging` as
+part of a routine check or your Day 1 baseline, and the Fluent Bit pod count did
+not match the node count. A DaemonSet runs exactly one pod per node. If the
+counts differ, a node is uncovered and its logs are not being collected.
+
+Either way: you found this by actively verifying coverage, not by waiting for an
+alert. The absence of logs from one node is the detection. Your job in this phase
+is to confirm which node is uncovered, how long it has been silent, and what
+events occurred on that node during the gap.
 
 ---
 

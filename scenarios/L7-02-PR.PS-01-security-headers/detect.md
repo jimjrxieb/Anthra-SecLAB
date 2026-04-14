@@ -5,10 +5,25 @@
 **CIS v8:** 16.12
 **NIST 800-53:** SI-10, SC-8
 
-You have received a ticket or tip that the Portfolio UI may be missing HTTP
-security headers. Possibly from a periodic config audit, a developer noticing
-something changed, or an automated scanner alert. Your job is to confirm the
-finding and gather evidence before proceeding to investigate.md.
+## How You Got Here
+
+Missing security headers are a configuration gap — no SIEM alert fires when a
+header is absent. You found this one of two ways:
+
+**Path A — Day 1 Baseline (most likely):** Your baseline checklist included a
+`curl -sI` against the Portfolio UI. You ran it during the initial assessment,
+noticed that `Content-Security-Policy`, `X-Frame-Options`, and
+`Strict-Transport-Security` were absent from the response, and logged it as a
+finding. Nobody paged you. You found it by looking.
+
+**Path B — Scheduled Scanner:** A periodic OWASP ZAP or Nuclei scan ran as part
+of the weekly assessment cycle and flagged missing headers in its report. You are
+now working the finding from the scan output.
+
+Either way: this is a configuration audit finding. The tool checked the response.
+The response was missing required headers. That is the detection. Your job now is
+to confirm it, measure the scope, and gather evidence before proceeding to
+investigate.md.
 
 ---
 

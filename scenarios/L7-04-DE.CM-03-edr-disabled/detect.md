@@ -1,13 +1,29 @@
 # L7-04 — DE.CM-03: Detect — EDR Coverage Gap
 
-## What You Are Looking For
+## How You Got Here
 
-Falco is silent. No alerts are firing. No events are reaching Alertmanager,
-Falcosidekick, or Splunk. The question is: how do you notice? A monitoring tool
-going down does not produce an obvious error — it produces an absence. Silence
-where there should be noise.
+This is the one scenario where the SIEM should catch it first — if your alerting
+is configured correctly. If it is not, that absence of alert is itself a finding.
 
-Your job as an L1 analyst is to detect that absence and measure how long it lasted.
+**Path A — Alertmanager fired (best case):** Alertmanager triggered a
+`FalcoPodNotRunning` or `FalcoSilent` alert. You received a page or saw it in
+Slack. The alert means your monitoring-of-the-monitor is working. Follow this
+playbook to confirm scope and remediate.
+
+**Path B — Day 1 Checklist:** Your baseline checklist (section 2.1) includes
+verifying that Falco pods are running and producing output. You ran it, saw zero
+Falco pods in the `falco` namespace, and opened this scenario.
+
+**Path C — Grafana went silent:** You were reviewing the Falco dashboard and
+noticed the event rate graph went flat. No new data points after a certain
+timestamp. The dashboard did not error — it just stopped updating. The timestamp
+where the line went flat is the start of your monitoring gap.
+
+If none of these paths triggered and you only noticed because you were explicitly
+looking — that is also a finding. Document it. The detection mechanism failed.
+
+Your job now is to confirm the absence, measure how long Falco has been down, and
+determine what events were missed during the gap.
 
 ---
 

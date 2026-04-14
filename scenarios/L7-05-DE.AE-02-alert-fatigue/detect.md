@@ -1,10 +1,25 @@
 # L7-05 — DE.AE-02: Detect Phase
 
-## L1 Analyst Task: Identify the Alert Fatigue Condition
+## How You Got Here
 
-You are a Level 1 analyst. The Falco dashboard is open. Alerts are flooding in.
-Your job in this phase is to recognize the problem — not just "alerts are firing"
-but "we have an alert quality problem that requires tuning."
+The tool is working. It is working too much. The configuration — default Falco
+rules, no tuning for this environment — is the problem, not the tool itself.
+
+**Path A — You opened Splunk or Grafana:** The alert volume dashboard shows 500+
+alerts per hour, most of them the same rule firing repeatedly. You cannot find
+real threats in the noise. Every time you try to investigate a specific event,
+you have to scroll past hundreds of identical low-signal alerts to get to it. You
+did not receive a ticket — you noticed the problem while trying to use the tool.
+
+**Path B — Baseline captured the rate:** During the Day 1 baseline, you recorded
+the alert rate from the Falco dashboard. The number you captured is unsustainable
+for manual review. You flagged it as a tuning gap at that time, and you are now
+working that finding.
+
+Either way: Falco is detecting. The issue is that the signal-to-noise ratio makes
+the detections unusable in practice. An analyst who cannot find real threats
+because of alert volume is the same as an analyst who receives no alerts. Your job
+in this phase is to measure the problem with numbers before recommending tuning.
 
 ---
 
