@@ -9,6 +9,7 @@
 #   3. Prometheus + Grafana — monitoring up before Falco (track Falco health)
 #   4. Fluent Bit — log pipeline ready before Falco (ship Falco container logs)
 #   5. Falco + Falcosidekick — runtime detection last (alerts go to ready pipeline)
+#   6. DAST NetworkPolicy — allows scanner pods to reach anthra services (scan jobs run manually)
 
 set -euo pipefail
 
@@ -33,7 +34,7 @@ fi
 echo ""
 
 # --- 1. Kyverno ---
-echo "--- [1/5] Installing Kyverno (admission control) ---"
+echo "--- [1/6] Installing Kyverno (admission control) ---"
 helm upgrade --install kyverno kyverno/kyverno \
     --namespace kyverno \
     --create-namespace \
@@ -43,13 +44,13 @@ echo "  Kyverno installed"
 echo ""
 
 # --- 2. Kyverno Policies ---
-echo "--- [2/5] Applying baseline policies (audit mode) ---"
+echo "--- [2/6] Applying baseline policies (audit mode) ---"
 kubectl apply -f "${SCRIPT_DIR}/kyverno/baseline-policies/"
 echo "  Policies applied (audit mode — violations logged, not blocked)"
 echo ""
 
 # --- 3. Prometheus + Grafana ---
-echo "--- [3/5] Installing Prometheus + Grafana (monitoring) ---"
+echo "--- [3/6] Installing Prometheus + Grafana (monitoring) ---"
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
     --namespace monitoring \
     --create-namespace \
@@ -70,7 +71,7 @@ fi
 echo ""
 
 # --- 4. Fluent Bit ---
-echo "--- [4/5] Installing Fluent Bit (log shipping → Splunk) ---"
+echo "--- [4/6] Installing Fluent Bit (log shipping → Splunk) ---"
 helm upgrade --install fluent-bit fluent/fluent-bit \
     --namespace logging \
     --create-namespace \
@@ -80,13 +81,21 @@ echo "  Fluent Bit installed — shipping logs to gp-splunk HEC"
 echo ""
 
 # --- 5. Falco ---
-echo "--- [5/5] Installing Falco (runtime detection) ---"
+echo "--- [5/6] Installing Falco (runtime detection) ---"
 helm upgrade --install falco falcosecurity/falco \
     --namespace falco \
     --create-namespace \
     --values "${SCRIPT_DIR}/falco/values.yaml" \
     --wait --timeout 5m
 echo "  Falco installed — alerts forwarding to Splunk via Falcosidekick"
+echo ""
+
+# --- 6. DAST Scanners ---
+echo "--- [6/6] Deploying DAST scanner NetworkPolicy ---"
+kubectl apply -f "${SCRIPT_DIR}/dast-scanners/scanner-networkpolicy.yaml"
+echo "  NetworkPolicy allow-dast-to-portfolio applied"
+echo "  DAST scanners ready. Run scans manually:"
+echo "    bash ${SCRIPT_DIR}/dast-scanners/deploy-dast.sh"
 echo ""
 
 # --- Verification ---

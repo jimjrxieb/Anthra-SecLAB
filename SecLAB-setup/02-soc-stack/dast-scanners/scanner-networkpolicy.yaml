@@ -1,0 +1,31 @@
+# CSF 2.0: PR.AC-05 (Network integrity protected)
+# CIS v8: 12.2 (Establish and Maintain a Secure Network Architecture)
+# NIST: SC-7 (Boundary Protection), RA-5 (Vulnerability Scanning)
+#
+# Allows DAST scanner pods (seclab-tool: dast) to reach portfolio API pods
+# on port 8000. Without this policy, scanner jobs cannot reach the target
+# service and the scan will fail — which itself is a finding (verify segmentation).
+#
+# The scanner label (seclab-tool: dast) is set in zap-job.yaml and nuclei-job.yaml.
+# Remove this policy after scanning to restore strict segmentation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dast-to-portfolio
+  namespace: anthra
+  labels:
+    seclab-purpose: dast-scanning
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              seclab-tool: dast
+      ports:
+        - port: 8000
+          protocol: TCP
