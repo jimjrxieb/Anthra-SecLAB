@@ -2,9 +2,10 @@
 
 ## Who You Are
 
-You are a Level 1 analyst on your first day at Anthra Corp. Your team runs a cybersecurity training lab
-built on a real Kubernetes cluster. Before any break/fix scenarios run, you need to capture the baseline
-state of this environment. That means: inventory what is running, verify the security stack is healthy,
+You are a Level 1 analyst on your first day at Anthra Corp. You may be joining as an L1 SOC analyst
+triaging alerts, a GRC associate running a technical compliance review, or an SRE validating security
+posture before taking on-call. Regardless of your role, you start the same way: capture the baseline
+state of this environment. That means inventory what is running, verify the security stack is healthy,
 document what is and is not configured correctly, and sign off that you saw it with your own eyes.
 
 This is not a test. If something looks wrong in the baseline, it is wrong. Write it down. The report you
@@ -103,10 +104,11 @@ a finding gets escalated to the security team, they can reference the standard i
 
 | Function | What It Means | Day 1 Relevance |
 |----------|--------------|-----------------|
+| Govern (GV) | Establish policies, roles, risk strategy | Pre-configured in this lab — policies exist, you verify them |
 | Identify (ID) | Know what you have | Asset inventory, RBAC audit, vulnerability scan |
 | Protect (PR) | Prevent harm | Security contexts, NetworkPolicies, policy enforcement |
 | Detect (DE) | See when something goes wrong | Falco running, log shipping healthy, Prometheus scraping |
-| Respond (RE) | React to incidents | Out of scope for Day 1 — you are in Identify/Protect/Detect |
+| Respond (RS) | React to incidents | Out of scope for Day 1 — you are in Identify/Protect/Detect |
 | Recover (RC) | Restore normal operations | Out of scope for Day 1 |
 
 Today covers ID, PR, and DE. You are establishing the baseline against which future detections and
