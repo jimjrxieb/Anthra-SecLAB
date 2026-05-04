@@ -1,0 +1,47 @@
+id: exposed-management-ports
+
+info:
+  name: Exposed Management Ports
+  author: seclab
+  severity: high
+  description: Detects SSH, RDP, WinRM, and Telnet exposed to 0.0.0.0
+  tags: network,exposure,management
+  reference:
+    - https://attack.mitre.org/techniques/T1021/001/
+  metadata:
+    nist: SC-7, CM-7
+
+tcp:
+  - inputs:
+      - data: "\r\n"
+    host:
+      - "{{Hostname}}:22"
+    read-size: 32
+    matchers:
+      - type: word
+        words:
+          - "SSH-"
+    name: ssh-exposed
+
+  - inputs:
+      - data: "\r\n"
+    host:
+      - "{{Hostname}}:23"
+    read-size: 16
+    matchers:
+      - type: binary
+        binary:
+          - "ff fd"
+    name: telnet-exposed
+
+  - inputs:
+      - data: "\r\n"
+    host:
+      - "{{Hostname}}:5985"
+    read-size: 64
+    matchers:
+      - type: word
+        words:
+          - "WS-Management"
+          - "WSMAN"
+    name: winrm-http-exposed
