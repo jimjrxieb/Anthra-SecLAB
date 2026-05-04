@@ -1,0 +1,6 @@
+falcosidekick:
+  enabled: true
+  config:
+    alertmanager:
+      hostport: http://prometheus-kube-prometheus-alertmanager.monitoring.svc.cluster.local:9093
+      minimumpriority: warning
